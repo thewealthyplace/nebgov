@@ -12,6 +12,7 @@ import {
 import {
   GovernorConfig,
   Proposal,
+  ProposalInput,
   ProposalState,
   ProposalVotes,
   VoteSupport,
@@ -43,7 +44,13 @@ const NETWORK_PASSPHRASES: Record<Network, string> = {
  *   votesAddress: "CGHI...",
  *   network: "testnet",
  * });
- * const id = await client.propose(keypair, "Upgrade protocol fee to 0.3%");
+ * const id = await client.propose(
+ *   keypair,
+ *   "Upgrade protocol fee to 0.3%",
+ *   "CAAAAA...",
+ *   "upgrade",
+ *   Buffer.from([0, 0, 1])
+ * );
  */
 export class GovernorClient {
   private readonly config: GovernorConfig;
@@ -61,9 +68,21 @@ export class GovernorClient {
 
   /**
    * Create a new governance proposal.
-   * TODO issue #15: add calldata encoding for on-chain execution targets.
+   *
+   * @param signer The account proposing the change
+   * @param description A brief summary of the proposal
+   * @param target The address of the contract to be called if the proposal passes
+   * @param fnName The name of the function to call on the target
+   * @param calldata The encoded arguments for the function call
+   * @returns The unique identifier of the created proposal
    */
-  async propose(signer: Keypair, description: string): Promise<bigint> {
+  async propose(
+    signer: Keypair,
+    description: string,
+    target: string,
+    fnName: string,
+    calldata: Buffer | Uint8Array
+  ): Promise<bigint> {
     const account = await this.server.getAccount(signer.publicKey());
 
     const tx = new TransactionBuilder(account, {
@@ -74,7 +93,10 @@ export class GovernorClient {
         this.contract.call(
           "propose",
           nativeToScVal(signer.publicKey(), { type: "address" }),
-          nativeToScVal(description, { type: "string" })
+          nativeToScVal(description, { type: "string" }),
+          nativeToScVal(target, { type: "address" }),
+          nativeToScVal(fnName, { type: "symbol" }),
+          nativeToScVal(calldata, { type: "bytes" })
         )
       )
       .setTimeout(30)
@@ -96,7 +118,6 @@ export class GovernorClient {
 
   /**
    * Cast a vote on an active proposal.
-   * TODO issue #16: return the weight of votes cast.
    */
   async castVote(
     signer: Keypair,
