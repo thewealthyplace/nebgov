@@ -40,6 +40,13 @@ export interface Proposal {
   cancelled: boolean;
 }
 
+export interface ProposalInput {
+  description: string;
+  target: string;
+  fnName: string;
+  calldata: Buffer | Uint8Array;
+}
+
 export interface ProposalVotes {
   votesFor: bigint;
   votesAgainst: bigint;
