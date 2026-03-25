@@ -105,10 +105,10 @@ fn test_full_proposal_lifecycle() {
         &admin,
         &votes_id,
         &timelock_id,
-        &10_u32, // voting_delay
-        &20_u32, // voting_period
-        &50_u32, // quorum_numerator (not yet enforced — TODO issue #8)
-        &0_i128, // proposal_threshold
+        &10_u32,  // voting_delay
+        &20_u32,  // voting_period
+        &0_u32,   // quorum_numerator (set to 0 for this simple majority test)
+        &0_i128,  // proposal_threshold
     );
 
     // ------------------------------------------------------------------

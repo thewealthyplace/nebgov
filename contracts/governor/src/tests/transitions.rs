@@ -15,6 +15,11 @@ impl MockVotesContract {
         // Return a high vote count that exceeds any reasonable threshold
         1_000_000
     }
+
+    pub fn get_past_total_supply(_env: Env, _ledger: u32) -> i128 {
+        // Return a fixed total supply for quorum calculations in tests
+        10_000_000
+    }
 }
 
 /// Shared helper: initialize the governor with standard test parameters.
