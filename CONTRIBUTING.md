@@ -1,51 +1,125 @@
 # Contributing to NebGov
 
-NebGov is an open-source governance framework for the Stellar ecosystem. All contributions are welcome — bug fixes, features, documentation, and tests.
+Thank you for contributing to NebGov, the permissionless governance framework for Stellar.
+
+## Prerequisites
+
+- **Rust** (stable toolchain) with `wasm32-unknown-unknown` target
+- **Stellar CLI** (`stellar`) for contract building and testing
+- **Node.js 20+** with **pnpm 9+**
+- **Git**
+
+### Install Prerequisites
+
+```bash
+# Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup target add wasm32-unknown-unknown
+
+# Stellar CLI
+cargo install --locked stellar-cli
+
+# Node.js (via nvm)
+nvm install 20
+npm install -g pnpm@9
+```
+
+## Local Setup
+
+```bash
+git clone https://github.com/nebgov/nebgov && cd nebgov
+
+# Build all Soroban contracts
+stellar contract build
+
+# Install JS dependencies
+pnpm install
+
+# Build the SDK
+pnpm build:sdk
+```
+
+## Running Tests
+
+```bash
+# Rust contract tests
+cargo test --workspace
+
+# SDK unit tests
+pnpm test:sdk
+
+# Frontend tests
+pnpm test:app
+
+# E2E tests (requires running app)
+cd app && npx playwright test
+```
+
+## Project Structure
+
+| Directory | Description |
+|-----------|-------------|
+| `contracts/governor` | Core governance contract (Rust/Soroban) |
+| `contracts/timelock` | Delayed execution controller |
+| `contracts/token-votes` | Voting power with checkpointing |
+| `contracts/governor-factory` | Permissionless governor deployer |
+| `contracts/treasury` | Multi-sig treasury |
+| `sdk/` | TypeScript SDK (`@nebgov/sdk`) |
+| `app/` | Next.js governance dashboard |
+| `docs/` | Architecture docs and ADRs |
 
 ## How to Contribute
 
 ### 1. Find an issue
+
 Browse [open issues](https://github.com/nebgov/nebgov/issues). Each issue is tagged with:
-- `complexity: trivial` — small, well-scoped change
-- `complexity: medium` — moderate implementation work
-- `complexity: high` — significant feature or architectural change
+- `complexity: trivial` - small, well-scoped change
+- `complexity: medium` - moderate implementation work
+- `complexity: high` - significant feature or architectural change
 
 Issues tagged `good first issue` are recommended for first-time contributors.
 
-### 2. Fork and branch
-```bash
-git checkout -b feat/issue-<number>-<short-description>
-```
+## Branch Naming
 
-### 3. Implement and test
-- Rust contracts: `cargo test --workspace`
-- SDK: `pnpm test:sdk`
-- Frontend: `pnpm test:app`
+- `feat/issue-<number>-<description>` for features
+- `fix/issue-<number>-<description>` for bug fixes
+- `docs/issue-<number>-<description>` for documentation
 
-### 4. Open a PR
-- Reference the issue: `Closes #<number>`
-- Describe what you changed and why
-- All CI checks must pass
+## Commit Messages
+
+Use imperative mood with conventional prefixes:
+- `feat: add vote delegation`
+- `fix: correct quorum calculation`
+- `docs: update architecture diagram`
+- `test: add governor edge cases`
+- `chore: update dependencies`
+
+## Pull Request Process
+
+1. Fork the repo and create a branch from `main`
+2. Make your changes with tests for new features
+3. Ensure all CI checks pass: `cargo test --workspace && pnpm test:sdk`
+4. Update docs if you changed any public API
+5. Open a PR referencing the issue: `Closes #<number>`
+6. Wait for maintainer review
 
 ## Code Standards
 
 ### Rust (contracts)
-- Follow standard Rust formatting: `cargo fmt`
-- No unsafe code
-- All public functions must have a doc comment
-- Tests live in `#[cfg(test)]` modules within each contract
+- Format with `cargo fmt`
+- No `unsafe` code
+- All public functions must have doc comments
+- Tests live in `#[cfg(test)]` modules
 
 ### TypeScript (SDK + frontend)
-- Strict TypeScript — no `any` types
+- Strict TypeScript, no `any` types
 - Run `pnpm lint` before pushing
-
-### Commit messages
-Use imperative mood: `Add vote checkpointing to token-votes`, not `Added...`
+- Use named exports
 
 ## Issue Scope
 
-Each issue is scoped to be completable in **under one week** by a single contributor. If you find that an issue is larger than expected, comment on it so it can be split.
+Each issue is scoped to be completable in **under one week** by a single contributor. If you find an issue is larger than expected, comment on it so it can be split.
 
 ## Questions?
 
-Open a discussion on GitHub.
+Open a discussion on GitHub or comment on the relevant issue.
