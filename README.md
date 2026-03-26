@@ -38,18 +38,9 @@ NebGov is the canonical governance framework for the Stellar ecosystem — a mod
 
 ## Quick Start
 
-See [docs/quick-start.md](./docs/quick-start.md) for a full walkthrough.
+Get started by deploying your first NebGov DAO to the Stellar testnet in under 10 minutes:
 
-```bash
-# Build all contracts
-cargo build --release --target wasm32-unknown-unknown
-
-# Install JS dependencies
-pnpm install
-
-# Run the frontend locally
-pnpm dev
-```
+👉 **[Deploy your first DAO on Stellar with NebGov](./docs/tutorial.md)**
 
 ---
 
