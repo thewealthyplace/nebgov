@@ -13,6 +13,7 @@ import React, {
   useState,
   useCallback,
 } from "react";
+import { Networks } from "@stellar/stellar-sdk";
 import {
   StellarWalletsKit,
   WalletNetwork,
@@ -22,6 +23,13 @@ import {
   AlbedoModule,
   type ISupportedWallet,
 } from "@creit.tech/stellar-wallets-kit";
+
+function appNetworkPassphrase(): string {
+  const n = process.env.NEXT_PUBLIC_NETWORK || "testnet";
+  if (n === "mainnet") return Networks.PUBLIC;
+  if (n === "futurenet") return Networks.FUTURENET;
+  return Networks.TESTNET;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +44,8 @@ interface WalletContextValue {
   /** Opens the StellarWalletsKit modal */
   connect: () => Promise<void>;
   disconnect: () => void;
+  /** Sign a prepared Soroban transaction XDR (fee-bump / classic TX). */
+  signTransaction: (unsignedXdr: string) => Promise<string>;
 }
 
 // Context
@@ -109,6 +119,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setError(null);
   }, []);
 
+  const signTransaction = useCallback(
+    async (unsignedXdr: string) => {
+      const kit = kitRef.current;
+      if (!kit || !publicKey) {
+        throw new Error("Connect your wallet first.");
+      }
+      const { signedTxXdr } = await kit.signTransaction(unsignedXdr, {
+        address: publicKey,
+        networkPassphrase: appNetworkPassphrase(),
+      });
+      return signedTxXdr;
+    },
+    [publicKey],
+  );
+
   return (
     <WalletContext.Provider
       value={{
@@ -119,6 +144,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         error,
         connect,
         disconnect,
+        signTransaction,
       }}
     >
       {children}
