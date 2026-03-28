@@ -8,7 +8,7 @@ import {
   nativeToScVal,
   scValToNative,
 } from "@stellar/stellar-sdk";
-import { GovernorConfig, Network } from "./types";
+import { GovernorConfig, DelegateInfo, Network } from "./types";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban-rpc.mainnet.stellar.gateway.fm",
@@ -141,5 +141,53 @@ export class VotesClient {
     const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
       .result?.retval;
     return raw ? (scValToNative(raw) as string) : null;
+  }
+
+  /**
+   * Get total supply of the voting token.
+   */
+  async getTotalSupply(): Promise<bigint> {
+    const result = await this.server.simulateTransaction(
+      new TransactionBuilder(
+        await this.server.getAccount(this.contract.contractId()),
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+      )
+        .addOperation(this.contract.call("total_supply"))
+        .setTimeout(30)
+        .build()
+    );
+
+    if (SorobanRpc.Api.isSimulationError(result)) return 0n;
+    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+      .result?.retval;
+    return raw ? BigInt(scValToNative(raw)) : 0n;
+  }
+
+  /**
+   * Get top delegates by voting power.
+   *
+   * Note: This queries known delegate addresses. In production, this would
+   * use an indexer or event subscription to track DelegateChanged events.
+   */
+  async getTopDelegates(addresses: string[], limit = 20): Promise<DelegateInfo[]> {
+    const totalSupply = await this.getTotalSupply();
+    if (totalSupply === 0n) return [];
+
+    const delegatePromises = addresses.map(async (address) => {
+      const votes = await this.getVotes(address);
+      return {
+        address,
+        votes,
+        percentOfSupply: totalSupply > 0n
+          ? Number((votes * 10000n) / totalSupply) / 100
+          : 0,
+      };
+    });
+
+    const delegates = await Promise.all(delegatePromises);
+    return delegates
+      .filter((d) => d.votes > 0n)
+      .sort((a, b) => (b.votes > a.votes ? 1 : b.votes < a.votes ? -1 : 0))
+      .slice(0, limit);
   }
 }

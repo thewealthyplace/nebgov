@@ -94,6 +94,16 @@ pub struct MigrateData {
     pub new_version: u32,
 }
 
+/// Governor configuration settings that can be updated via governance proposal.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct GovernorSettings {
+    pub voting_delay: u32,
+    pub voting_period: u32,
+    pub quorum_numerator: u32,
+    pub proposal_threshold: i128,
+}
+
 /// Vote support options.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -588,6 +598,66 @@ impl GovernorContract {
             .instance()
             .get(&DataKey::ProposalThreshold)
             .unwrap_or(0)
+    }
+
+    pub fn quorum_numerator(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::QuorumNumerator)
+            .unwrap_or(0)
+    }
+
+    pub fn get_settings(env: Env) -> GovernorSettings {
+        GovernorSettings {
+            voting_delay: env
+                .storage()
+                .instance()
+                .get(&DataKey::VotingDelay)
+                .unwrap_or(100),
+            voting_period: env
+                .storage()
+                .instance()
+                .get(&DataKey::VotingPeriod)
+                .unwrap_or(1000),
+            quorum_numerator: env
+                .storage()
+                .instance()
+                .get(&DataKey::QuorumNumerator)
+                .unwrap_or(0),
+            proposal_threshold: env
+                .storage()
+                .instance()
+                .get(&DataKey::ProposalThreshold)
+                .unwrap_or(0),
+        }
+    }
+
+    /// Update governor configuration parameters.
+    ///
+    /// Authorization is restricted to the governor's own contract address.
+    /// This means the call must originate from an executed on-chain proposal.
+    pub fn update_config(env: Env, new_settings: GovernorSettings) {
+        env.current_contract_address().require_auth();
+
+        let old_settings = Self::get_settings(env.clone());
+
+        env.storage()
+            .instance()
+            .set(&DataKey::VotingDelay, &new_settings.voting_delay);
+        env.storage()
+            .instance()
+            .set(&DataKey::VotingPeriod, &new_settings.voting_period);
+        env.storage()
+            .instance()
+            .set(&DataKey::QuorumNumerator, &new_settings.quorum_numerator);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalThreshold, &new_settings.proposal_threshold);
+
+        env.events().publish(
+            (Symbol::new(&env, "ConfigUpdated"),),
+            (old_settings, new_settings),
+        );
     }
 
     /// Get total proposal count.

@@ -11,6 +11,7 @@ import {
 } from "@stellar/stellar-sdk";
 import {
   GovernorConfig,
+  GovernorSettings,
   Proposal,
   ProposalInput,
   ProposalState,
@@ -265,6 +266,42 @@ export class GovernorClient {
     const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
       .result?.retval;
     return raw ? BigInt(scValToNative(raw)) : 0n;
+  }
+
+  /**
+   * Build calldata for an update_config proposal.
+   *
+   * Returns the target, function name, and encoded calldata to pass to propose().
+   */
+  buildUpdateConfigProposal(newSettings: GovernorSettings): {
+    target: string;
+    fnName: string;
+    calldata: Uint8Array;
+  } {
+    const settingsScVal = xdr.ScVal.scvMap([
+      new xdr.ScMapEntry({
+        key: xdr.ScVal.scvSymbol("voting_delay"),
+        val: nativeToScVal(newSettings.votingDelay, { type: "u32" }),
+      }),
+      new xdr.ScMapEntry({
+        key: xdr.ScVal.scvSymbol("voting_period"),
+        val: nativeToScVal(newSettings.votingPeriod, { type: "u32" }),
+      }),
+      new xdr.ScMapEntry({
+        key: xdr.ScVal.scvSymbol("quorum_numerator"),
+        val: nativeToScVal(newSettings.quorumNumerator, { type: "u32" }),
+      }),
+      new xdr.ScMapEntry({
+        key: xdr.ScVal.scvSymbol("proposal_threshold"),
+        val: nativeToScVal(newSettings.proposalThreshold, { type: "i128" }),
+      }),
+    ]);
+
+    return {
+      target: this.config.governorAddress,
+      fnName: "update_config",
+      calldata: settingsScVal.toXDR(),
+    };
   }
 
   // --- Internal ---

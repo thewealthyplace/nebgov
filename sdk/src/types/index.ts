@@ -82,3 +82,16 @@ export interface TreasuryTx {
   executed: boolean;
   cancelled: boolean;
 }
+
+export interface GovernorSettings {
+  votingDelay: number;
+  votingPeriod: number;
+  quorumNumerator: number;
+  proposalThreshold: bigint;
+}
+
+export interface DelegateInfo {
+  address: string;
+  votes: bigint;
+  percentOfSupply: number;
+}
