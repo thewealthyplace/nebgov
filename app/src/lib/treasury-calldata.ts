@@ -19,7 +19,7 @@ export function newArgRow(): CalldataArgRow {
   };
 }
 
-function rowToScVal(row: CalldataArgRow): xdr.ScVal {
+export function calldataArgRowToScVal(row: CalldataArgRow): xdr.ScVal {
   const v = row.value.trim();
   switch (row.kind) {
     case "address":
@@ -50,8 +50,15 @@ export function encodeCallableCalldata(
   if (!fn) throw new Error("Function name is required.");
 
   const head = nativeToScVal(fn, { type: "symbol" });
-  const tail = rows.filter((r) => r.value.trim() !== "").map(rowToScVal);
+  const tail = rows.filter((r) => r.value.trim() !== "").map(calldataArgRowToScVal);
   return Uint8Array.from(xdr.ScVal.scvVec([head, ...tail]).toXDR());
+}
+
+/** Governor `calldatas` entries: argument vector XDR only (function name is its own field). */
+export function encodeGovernorCalldataBytes(rows: CalldataArgRow[]): Uint8Array {
+  const vals = rows.filter((r) => r.value.trim() !== "").map(calldataArgRowToScVal);
+  if (vals.length === 0) return new Uint8Array(0);
+  return Uint8Array.from(xdr.ScVal.scvVec(vals).toXDR());
 }
 
 export function previewCalldata(
