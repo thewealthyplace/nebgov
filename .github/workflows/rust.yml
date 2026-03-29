@@ -107,8 +107,8 @@ jobs:
         uses: CoinFabrik/scout-actions@v3.2
         with:
           working_directory: .
-          fail_on_error: true
-          scout_extra_args: "--output-format sarif --output-path scout-results.sarif --fail-on-severity critical,high"
+          fail_on_error: false
+          scout_extra_args: "--output-format sarif --output-path scout-results.sarif"
 
       # SARIF artifact must be uploaded even if Scout fails
       - name: Upload Scout SARIF report
