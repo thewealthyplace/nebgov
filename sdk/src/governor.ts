@@ -19,6 +19,7 @@ import {
   Network,
   UnknownProposalStateError,
 } from "./types";
+import { hexToBytes32 } from "./utils";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban-rpc.mainnet.stellar.gateway.fm",
@@ -71,6 +72,8 @@ export class GovernorClient {
    *
    * @param signer The account proposing the change
    * @param description A brief summary of the proposal
+   * @param descriptionHash SHA-256 hash of the full description (hex string)
+   * @param metadataUri URI pointing to the full description (ipfs:// or https://)
    * @param target The address of the contract to be called if the proposal passes
    * @param fnName The name of the function to call on the target
    * @param calldata The encoded arguments for the function call
@@ -79,10 +82,15 @@ export class GovernorClient {
   async propose(
     signer: Keypair,
     description: string,
+    descriptionHash: string,
+    metadataUri: string,
     target: string,
     fnName: string,
     calldata: Buffer | Uint8Array
   ): Promise<bigint> {
+    // Convert hex string to BytesN<32>
+    const hashBytes = hexToBytes32(descriptionHash);
+
     const account = await this.server.getAccount(signer.publicKey());
 
     const tx = new TransactionBuilder(account, {
@@ -94,6 +102,8 @@ export class GovernorClient {
           "propose",
           nativeToScVal(signer.publicKey(), { type: "address" }),
           nativeToScVal(description, { type: "string" }),
+          nativeToScVal(hashBytes, { type: "bytes" }),
+          nativeToScVal(metadataUri, { type: "string" }),
           nativeToScVal(target, { type: "address" }),
           nativeToScVal(fnName, { type: "symbol" }),
           nativeToScVal(calldata, { type: "bytes" })
@@ -286,4 +296,62 @@ export class GovernorClient {
     }
     throw new Error(`Transaction not confirmed after ${retries} retries`);
   }
+}
+
+/**
+ * Compute SHA-256 hash of a proposal description.
+ *
+ * This function uses the Web Crypto API in browser environments and
+ * Node.js crypto module in server-side environments. The input is
+ * UTF-8 encoded before hashing, and the output is a 64-character
+ * lowercase hex string.
+ *
+ * @param text - The proposal description text to hash
+ * @returns Hex-encoded SHA-256 hash (64 lowercase characters)
+ */
+export async function hashDescription(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+
+  // Use Web Crypto API (available in both browser and Node.js 18+)
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // Fallback to Node.js crypto module
+  if (typeof require !== "undefined") {
+    try {
+      const cryptoNode = require("crypto");
+      const hash = cryptoNode.createHash("sha256").update(data).digest("hex");
+      return hash;
+    } catch (e) {
+      // ignore and try next fallback
+    }
+  }
+
+  throw new Error("No crypto API available in this environment");
+}
+
+/**
+ * Synchronous version of hashDescription for environments where async is not needed.
+ * Uses the same algorithm and encoding.
+ */
+export function hashDescriptionSync(text: string): string {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+
+  // Try Node.js crypto first (synchronous)
+  if (typeof require !== "undefined") {
+    try {
+      const cryptoNode = require("crypto");
+      const hash = cryptoNode.createHash("sha256").update(data).digest("hex");
+      return hash;
+    } catch (e) {
+      // ignore and try next fallback
+    }
+  }
+
+  throw new Error("Synchronous SHA-256 is only available in Node.js environments. Use async hashDescription instead.");
 }

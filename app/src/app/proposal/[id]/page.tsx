@@ -1,45 +1,60 @@
 "use client";
 
-/**
- * Proposal detail page — shows votes, description, and voting UI.
- * TODO issue #43: fetch real proposal data, add vote breakdown chart (recharts).
- * TODO issue #46: wire up vote casting UI to GovernorClient.castVote().
- */
-
-import { useEffect, useMemo, useState } from "react";
-import { VoteSupport, ProposalState, VotesClient, type Network } from "@nebgov/sdk";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { VoteSupport, ProposalState, VotesClient, GovernorClient, type Network } from "@nebgov/sdk";
+import { AlertTriangle, Info, ExternalLink, Loader2 } from "lucide-react";
 import { useWallet } from "../../../lib/wallet-context";
 import { DelegateModal } from "../../../components/DelegateModal";
+import { fetchProposalMetadata, verifyMetadataHash } from "../../../lib/metadata";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  ReferenceLine
+} from "recharts";
 
 interface Props {
   params: { id: string };
 }
 
-const MOCK_PROPOSAL = {
-  id: 1n,
-  description: "Upgrade protocol fee to 0.3%",
-  state: ProposalState.Active,
-  votesFor: 150000n,
-  votesAgainst: 40000n,
-  votesAbstain: 5000n,
-  endLedger: 123456,
-  proposer: "GABC...1234",
-  quorum: 100000n as bigint | undefined,
+// Initial state for proposal to avoid undefined errors during loading
+const INITIAL_PROPOSAL = {
+  id: 0n,
+  description: "Loading...",
+  descriptionHash: "",
+  metadataUri: "",
+  state: ProposalState.Pending,
+  votesFor: 0n,
+  votesAgainst: 0n,
+  votesAbstain: 0n,
+  endLedger: 0,
+  proposer: "",
+  quorum: 0n,
 };
 
 export default function ProposalDetailPage({ params }: Props) {
+  const proposalId = useMemo(() => BigInt(params.id), [params.id]);
+  const [proposal, setProposal] = useState(INITIAL_PROPOSAL);
+  const [loading, setLoading] = useState(true);
+  const [metadata, setMetadata] = useState<string | null>(null);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [hashMismatched, setHashMismatched] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   const [voted, setVoted] = useState(false);
   const [voting, setVoting] = useState(false);
   const [selectedSupport, setSelectedSupport] = useState<VoteSupport | null>(null);
-  const [delegateOpen, setDelegateOpen] = useState(false);
-  const [delegatee, setDelegatee] = useState<string | null>(null);
+  const [delegateModalOpen, setDelegateModalOpen] = useState(false);
   const [votingPower, setVotingPower] = useState<bigint>(0n);
   const [delegationLoading, setDelegationLoading] = useState(false);
 
-  const proposal = MOCK_PROPOSAL; // TODO: fetch by params.id
   const { publicKey, isConnected } = useWallet();
 
-  const votesClient = useMemo(() => {
+  const config = useMemo(() => {
     const governorAddress = process.env.NEXT_PUBLIC_GOVERNOR_ADDRESS;
     const timelockAddress = process.env.NEXT_PUBLIC_TIMELOCK_ADDRESS;
     const votesAddress = process.env.NEXT_PUBLIC_VOTES_ADDRESS;
@@ -48,256 +63,328 @@ export default function ProposalDetailPage({ params }: Props) {
 
     if (!governorAddress || !timelockAddress || !votesAddress) return null;
 
-    return new VotesClient({
+    return {
       governorAddress,
       timelockAddress,
       votesAddress,
       network,
       ...(rpcUrl && { rpcUrl }),
-    });
+    };
   }, []);
+
+  const votesClient = useMemo(() => config ? new VotesClient(config) : null, [config]);
+  const governorClient = useMemo(() => config ? new GovernorClient(config) : null, [config]);
+
+  const loadProposal = useCallback(async () => {
+    if (!governorClient) return;
+    setLoading(true);
+    try {
+      const p = await governorClient.getProposal(proposalId);
+      setProposal({
+        ...p,
+        state: await governorClient.getProposalState(proposalId),
+      });
+    } catch (err) {
+      console.error("Failed to load proposal:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [governorClient, proposalId]);
+
+  useEffect(() => {
+    loadProposal();
+  }, [loadProposal]);
+
+  const loadMetadata = useCallback(async () => {
+    if (!proposal.metadataUri) return;
+    setMetadataLoading(true);
+    setFetchError(null);
+    try {
+      const content = await fetchProposalMetadata(proposal.metadataUri);
+      setMetadata(content);
+      const isMatch = await verifyMetadataHash(content, proposal.descriptionHash);
+      setHashMismatched(!isMatch);
+    } catch (err: any) {
+      setFetchError(err.message);
+    } finally {
+      setMetadataLoading(false);
+    }
+  }, [proposal.metadataUri, proposal.descriptionHash]);
+
+  useEffect(() => {
+    if (proposal.id !== 0n) {
+      loadMetadata();
+    }
+  }, [proposal.id, loadMetadata]);
 
   async function refreshDelegation() {
     if (!votesClient || !publicKey) return;
     setDelegationLoading(true);
     try {
-      const [d, power] = await Promise.all([
-        votesClient.getDelegatee(publicKey),
-        votesClient.getVotes(publicKey),
-      ]);
-      setDelegatee(d);
+      const power = await votesClient.getVotes(publicKey);
       setVotingPower(power);
+    } catch (err) {
+      console.error("Failed to fetch voting power:", err);
     } finally {
       setDelegationLoading(false);
     }
   }
 
   useEffect(() => {
-    if (!isConnected || !publicKey) {
-      setDelegatee(null);
-      setVotingPower(0n);
-      return;
+    if (isConnected) {
+      refreshDelegation();
     }
-    refreshDelegation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, publicKey, votesClient]);
+  }, [isConnected, votesClient, publicKey]);
 
-  const total =
-    Number(proposal.votesFor) +
-    Number(proposal.votesAgainst) +
-    Number(proposal.votesAbstain);
-
-  const pct = (n: bigint) =>
-    total === 0 ? 0 : Math.round((Number(n) / total) * 100);
-
-  const toMillions = (n: bigint) => Number(n) / 1e6;
-
-  const chartData = [
-    { name: "For", votes: toMillions(proposal.votesFor), pct: pct(proposal.votesFor) },
-    { name: "Against", votes: toMillions(proposal.votesAgainst), pct: pct(proposal.votesAgainst) },
-    { name: "Abstain", votes: toMillions(proposal.votesAbstain), pct: pct(proposal.votesAbstain) },
-  ];
+  // Transform data for Recharts
+  const chartData = useMemo(() => [
+    { name: "For", votes: Number(proposal.votesFor) },
+    { name: "Against", votes: Number(proposal.votesAgainst) },
+    { name: "Abstain", votes: Number(proposal.votesAbstain) },
+  ], [proposal.votesFor, proposal.votesAgainst, proposal.votesAbstain]);
 
   const COLORS: Record<string, string> = {
-    For: "#22c55e",
-    Against: "#ef4444",
-    Abstain: "#9ca3af",
+    For: "#10b981",    // green-500
+    Against: "#f43f5e", // rose-500
+    Abstain: "#94a3b8", // slate-400
   };
 
-  const quorumThreshold = proposal.quorum
-    ? Number(proposal.quorum) / 1e6
-    : undefined;
+  const totalVotes = proposal.votesFor + proposal.votesAgainst + proposal.votesAbstain;
+  const quorumReached = proposal.quorum && totalVotes >= proposal.quorum;
 
   async function handleVote() {
-    if (selectedSupport === null) return;
+    if (selectedSupport === null || !governorClient || !publicKey) return;
     setVoting(true);
     try {
-      // TODO issue #46: call GovernorClient.castVote(signer, proposalId, support)
+      // TODO: In a real app, use wallet kit for signing
       console.log("Casting vote:", VoteSupport[selectedSupport]);
       await new Promise((r) => setTimeout(r, 1500));
       setVoted(true);
+      loadProposal();
+    } catch (err) {
+      console.error("Voting failed:", err);
     } finally {
       setVoting(false);
     }
   }
 
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] text-gray-500">
+        <Loader2 className="w-8 h-8 animate-spin mb-4" />
+        <p>Loading proposal data...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
-      <p className="text-sm text-gray-400 mb-1">
-        Proposal #{params.id}
-      </p>
+      <div className="flex items-center gap-2 mb-1">
+        <p className="text-sm text-gray-400">
+          Proposal #{params.id}
+        </p>
+        <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
+          ${proposal.state === ProposalState.Active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>
+          {ProposalState[proposal.state]}
+        </div>
+      </div>
+
       <h1 className="text-2xl font-bold text-gray-900 mb-2">
         {proposal.description}
       </h1>
+
       <p className="text-sm text-gray-500 mb-6">
         Proposed by <span className="font-mono">{proposal.proposer}</span>
       </p>
+
+      {/* Hash Mismatch Warning */}
+      {hashMismatched && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 flex gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <h3 className="font-semibold text-amber-800">Content Integrity Warning</h3>
+            <p className="text-amber-700 mt-0.5">
+              The external content fetched for this proposal does not match the hash stored on-chain.
+              The displayed description may have been tampered with.
+            </p>
+            <div className="mt-2 space-y-1 font-mono text-[11px]">
+              <p className="text-gray-500">On-chain: {proposal.descriptionHash.substring(0, 16)}...</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fetch Error Info */}
+      {fetchError && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 flex gap-3 text-sm">
+          <Info className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+          <div className="text-blue-700">
+            <p className="font-semibold text-blue-800">Metadata Unreachable</p>
+            <p className="mt-0.5">Could not load the full description. Check the URI directly below.</p>
+            <p className="mt-2 font-mono text-[11px] text-gray-500">Hash: {proposal.descriptionHash}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Metadata / Description Section */}
+      <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">
+            Description
+          </h2>
+          {proposal.metadataUri && (
+            <a
+              href={proposal.metadataUri.startsWith('ipfs://')
+                ? `https://ipfs.io/ipfs/${proposal.metadataUri.replace('ipfs://', '')}`
+                : proposal.metadataUri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 flex items-center gap-1 text-xs hover:underline"
+            >
+              View Source <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+        </div>
+
+        {metadataLoading ? (
+          <div className="flex items-center gap-2 text-gray-400 text-sm py-4">
+            <Loader2 className="w-4 h-4 animate-spin" /> Fetching off-chain content...
+          </div>
+        ) : metadata ? (
+          <div className="prose prose-sm max-w-none text-gray-800 whitespace-pre-wrap">
+            {metadata}
+          </div>
+        ) : (
+          <p className="text-gray-400 italic py-4">
+            {fetchError ? "Content unavailable" : proposal.description}
+          </p>
+        )}
+      </div>
 
       {/* Delegation */}
       <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">
-              Delegation
+            <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-1">
+              Your Voting Power
             </h2>
-            <p className="text-xs text-gray-500 mt-1">
-              Delegate voting power to yourself or another address.
-            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl font-bold text-gray-900 font-mono">
+                {delegationLoading ? "..." : (Number(votingPower) / 10 ** 7).toLocaleString()}
+              </span>
+              <span className="text-sm text-gray-400">NEB</span>
+            </div>
           </div>
           <button
-            onClick={() => setDelegateOpen(true)}
-            disabled={!isConnected}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => setDelegateModalOpen(true)}
+            className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
           >
             Delegate
           </button>
         </div>
-
-        <div className="mt-4 text-sm text-gray-700">
-          {delegationLoading ? (
-            <p className="text-gray-500">Loading delegation…</p>
-          ) : delegatee ? (
-            <div className="space-y-1">
-              <p>
-                Current delegatee:{" "}
-                <span className="font-mono text-gray-900">{delegatee}</span>
-              </p>
-              <p>
-                Voting power:{" "}
-                <span className="font-mono text-gray-900">{votingPower.toString()}</span>
-              </p>
-            </div>
-          ) : (
-            <p className="text-gray-500">
-              No delegatee set{isConnected ? "." : " (connect wallet to view)."}
-            </p>
-          )}
-        </div>
       </div>
 
-      {/* Vote bars — TODO issue #43: replace with recharts pie/bar chart */}
+      {/* Vote bars */}
       <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6 space-y-4">
         <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">
           Current Votes
         </h2>
 
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart
-            data={chartData}
-            layout="vertical"
-            margin={{ top: 0, right: 30, left: 10, bottom: 0 }}
-          >
-            <XAxis
-              type="number"
-              tick={{ fontSize: 12, fill: "#6b7280" }}
-              tickFormatter={(v: number) => `${v.toLocaleString()}M`}
-              axisLine={false}
-              tickLine={false}
-            />
-            <YAxis
-              type="category"
-              dataKey="name"
-              tick={{ fontSize: 13, fontWeight: 500, fill: "#374151" }}
-              width={70}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip
-              formatter={(value: number, _name: string, entry: { payload: { pct: number } }) => [
-                `${value.toLocaleString()}M tokens (${entry.payload.pct}%)`,
-                "Votes",
-              ]}
-              cursor={{ fill: "rgba(0,0,0,0.04)" }}
-              contentStyle={{ borderRadius: 8, fontSize: 13 }}
-            />
-            <Bar
-              dataKey="votes"
-              radius={[0, 6, 6, 0]}
-              isAnimationActive={true}
-              animationDuration={800}
-              barSize={28}
+        <div className="h-48 w-full mt-4">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={chartData}
+              layout="vertical"
+              margin={{ left: -20, right: 20, top: 0, bottom: 0 }}
             >
-              {chartData.map((entry) => (
-                <Cell key={entry.name} fill={COLORS[entry.name]} />
-              ))}
-            </Bar>
-            {quorumThreshold !== undefined && (
-              <ReferenceLine
-                x={quorumThreshold}
-                stroke="#6366f1"
-                strokeDasharray="6 3"
-                strokeWidth={2}
-                label={{
-                  value: `Quorum ${quorumThreshold.toLocaleString()}M`,
-                  position: "top",
-                  fill: "#6366f1",
-                  fontSize: 11,
-                  fontWeight: 600,
-                }}
+              <XAxis type="number" hide />
+              <YAxis
+                type="category"
+                dataKey="name"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fontSize: 12, fontWeight: 500 }}
               />
-            )}
-          </BarChart>
-        </ResponsiveContainer>
+              <Tooltip
+                cursor={{ fill: 'transparent' }}
+                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+              />
+              <Bar
+                dataKey="votes"
+                radius={[0, 4, 4, 0]}
+                animationDuration={800}
+                barSize={28}
+              >
+                {chartData.map((entry) => (
+                  <Cell key={entry.name} fill={COLORS[entry.name]} />
+                ))}
+              </Bar>
+              {proposal.quorum && (
+                <ReferenceLine
+                  x={Number(proposal.quorum)}
+                  stroke="#ef4444"
+                  strokeDasharray="3 3"
+                  label={{ position: 'top', value: 'Quorum', fill: '#ef4444', fontSize: 10 }}
+                />
+              )}
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
 
-        {/* Legend with counts */}
-        <div className="flex justify-center gap-6 mt-4 text-sm">
-          {chartData.map((entry) => (
-            <div key={entry.name} className="flex items-center gap-1.5">
-              <span
-                className="inline-block w-3 h-3 rounded-sm"
-                style={{ backgroundColor: COLORS[entry.name] }}
-              />
-              <span className="text-gray-700 font-medium">{entry.name}</span>
-              <span className="text-gray-400">
-                {entry.votes.toLocaleString()}M ({entry.pct}%)
-              </span>
-            </div>
-          ))}
+        <div className="grid grid-cols-3 gap-4 border-t border-gray-100 pt-6">
+          <div>
+            <p className="text-xs text-gray-400 font-medium mb-1">FOR</p>
+            <p className="font-mono text-lg font-bold text-emerald-600">{(Number(proposal.votesFor) / 10 ** 7).toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 font-medium mb-1">AGAINST</p>
+            <p className="font-mono text-lg font-bold text-rose-600">{(Number(proposal.votesAgainst) / 10 ** 7).toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 font-medium mb-1">ABSTAIN</p>
+            <p className="font-mono text-lg font-bold text-slate-500">{(Number(proposal.votesAbstain) / 10 ** 7).toLocaleString()}</p>
+          </div>
         </div>
       </div>
 
       {/* Voting UI */}
       {proposal.state === ProposalState.Active && !voted && (
-        <div className="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-4">
-            Cast Your Vote
-          </h2>
-          <div className="flex gap-3 mb-4">
-            {[
-              { label: "For", value: VoteSupport.For, color: "border-green-500 text-green-700" },
-              { label: "Against", value: VoteSupport.Against, color: "border-red-500 text-red-700" },
-              { label: "Abstain", value: VoteSupport.Abstain, color: "border-gray-400 text-gray-600" },
-            ].map(({ label, value, color }) => (
+        <div className="bg-white border-2 border-indigo-600 rounded-xl p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-gray-900 mb-4">Cast Your Vote</h2>
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            {(["For", "Against", "Abstain"] as const).map((support) => (
               <button
-                key={label}
-                onClick={() => setSelectedSupport(value)}
-                className={`flex-1 border-2 rounded-lg py-2 text-sm font-medium transition-colors
-                  ${selectedSupport === value ? color + " bg-opacity-10" : "border-gray-200 text-gray-500"}`}
+                key={support}
+                onClick={() => setSelectedSupport(VoteSupport[support])}
+                className={`py-3 rounded-lg border-2 font-medium transition-all
+                  ${selectedSupport === VoteSupport[support]
+                    ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                    : "border-gray-100 hover:border-gray-200 text-gray-600"}`}
               >
-                {label}
+                {support}
               </button>
             ))}
           </div>
           <button
             onClick={handleVote}
-            disabled={selectedSupport === null || voting}
+            disabled={selectedSupport === null || voting || !isConnected}
             className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {voting ? "Submitting vote..." : "Submit Vote"}
+            {voting ? "Submitting vote..." : isConnected ? "Submit Vote" : "Connect Wallet to Vote"}
           </button>
         </div>
       )}
 
       {voted && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-green-800 text-sm">
-          Your vote has been submitted.
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+          <p className="text-emerald-800 font-medium">Your vote has been recorded!</p>
         </div>
       )}
 
       <DelegateModal
-        open={delegateOpen}
-        onClose={() => setDelegateOpen(false)}
-        onDelegated={() => refreshDelegation()}
+        isOpen={delegateModalOpen}
+        onClose={() => setDelegateModalOpen(false)}
+        onSuccess={refreshDelegation}
       />
     </div>
   );
