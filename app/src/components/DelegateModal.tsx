@@ -4,7 +4,7 @@
  * Delegation modal — lets users delegate their voting power.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Keypair } from "@stellar/stellar-sdk";
 import { VotesClient, type Network } from "@nebgov/sdk";
 import { useWallet } from "../lib/wallet-context";
@@ -13,6 +13,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onDelegated?: () => void;
+  prefillAddress?: string;
 }
 
 function getVotesClientFromEnv(): VotesClient {
@@ -45,10 +46,16 @@ function getDelegateSigner(): Keypair {
   return Keypair.fromSecret(secret);
 }
 
-export function DelegateModal({ open, onClose, onDelegated }: Props) {
-  const [delegatee, setDelegatee] = useState("");
+export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Props) {
+  const [delegatee, setDelegatee] = useState(prefillAddress || "");
   const [submitting, setSubmitting] = useState(false);
   const { isConnected, publicKey } = useWallet();
+
+  useEffect(() => {
+    if (prefillAddress) {
+      setDelegatee(prefillAddress);
+    }
+  }, [prefillAddress]);
 
   if (!open) return null;
 

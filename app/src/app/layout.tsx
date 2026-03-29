@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { NavBar } from "../components/NavBar";
+import { GovernorNotificationsProvider } from "../components/GovernorNotificationsProvider";
 import { WalletProvider } from "../lib/wallet-context";
 import { Toaster } from "react-hot-toast";
 
@@ -20,11 +21,20 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} bg-gray-50 min-h-screen`}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `;(function(){try{var theme=localStorage.getItem('theme');if(theme==='dark'){document.documentElement.classList.add('dark');return;}if(!theme&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.classList.add('dark');}}catch(e){}})();`,
+          }}
+        />
+      </head>
+      <body className={`${inter.className} bg-gray-50 dark:bg-gray-900 min-h-screen`}>
         <WalletProvider>
-          <Toaster position="bottom-right" />
-          <NavBar />
-          <main className="pt-16">{children}</main>
+          <GovernorNotificationsProvider>
+            <Toaster position="bottom-right" />
+            <NavBar />
+            <main className="pt-16">{children}</main>
+          </GovernorNotificationsProvider>
         </WalletProvider>
       </body>
     </html>

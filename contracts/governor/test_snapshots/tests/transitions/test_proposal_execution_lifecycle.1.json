@@ -62,6 +62,12 @@
                   "string": "Test proposal"
                 },
                 {
+                  "bytes": "1c6b4a6130bbe90b01411cf29743a638cf8520f556dcbdc570ff655bfafd2c0a"
+                },
+                {
+                  "string": "https://example.com/metadata"
+                },
+                {
                   "vec": [
                     {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
@@ -203,6 +209,12 @@
                 },
                 {
                   "string": "Test proposal 2"
+                },
+                {
+                  "bytes": "4be223ccce30fe1a0570d869e6d698bdb0cb84d7363c4ab8c6a1de4ea1f059ed"
+                },
+                {
+                  "string": "https://example.com/metadata2"
                 },
                 {
                   "vec": [
@@ -445,6 +457,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "description_hash"
+                      },
+                      "val": {
+                        "bytes": "4be223ccce30fe1a0570d869e6d698bdb0cb84d7363c4ab8c6a1de4ea1f059ed"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "end_ledger"
                       },
                       "val": {
@@ -477,6 +497,14 @@
                       },
                       "val": {
                         "u64": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "metadata_uri"
+                      },
+                      "val": {
+                        "string": "https://example.com/metadata2"
                       }
                     },
                     {

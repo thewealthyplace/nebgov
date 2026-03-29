@@ -224,6 +224,12 @@
                   "string": "Execute mock governance action"
                 },
                 {
+                  "bytes": "dc034641a6254e880e85b538c5f4f04be4d51e6e86a3f16a126a3429be98cada"
+                },
+                {
+                  "string": "ipfs://QmExample"
+                },
+                {
                   "vec": [
                     {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
@@ -1290,6 +1296,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "description_hash"
+                      },
+                      "val": {
+                        "bytes": "dc034641a6254e880e85b538c5f4f04be4d51e6e86a3f16a126a3429be98cada"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "end_ledger"
                       },
                       "val": {
@@ -1322,6 +1336,14 @@
                       },
                       "val": {
                         "u64": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "metadata_uri"
+                      },
+                      "val": {
+                        "string": "ipfs://QmExample"
                       }
                     },
                     {

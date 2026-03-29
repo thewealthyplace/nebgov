@@ -8,7 +8,7 @@ mod transitions;
 // wasm32-unknown-unknown`. The unit tests below focus on the auth guard,
 // which is the security-critical invariant.
 
-use crate::{GovernorContract, GovernorContractClient};
+use crate::{GovernorContract, GovernorContractClient, GovernorSettings};
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},
     Address, BytesN, Env, IntoVal,
@@ -81,4 +81,74 @@ fn upgrade_rejects_admin_acting_as_direct_caller() {
     }]);
 
     client.upgrade(&new_wasm_hash);
+}
+
+#[test]
+#[should_panic]
+fn update_config_rejects_caller_that_is_not_the_contract_address() {
+    let env = Env::default();
+    let contract_id = env.register(GovernorContract, ());
+    let client = GovernorContractClient::new(&env, &contract_id);
+
+    let attacker = Address::generate(&env);
+    let new_settings = GovernorSettings {
+        voting_delay: 200,
+        voting_period: 2000,
+        quorum_numerator: 10,
+        proposal_threshold: 500,
+    };
+
+    env.mock_auths(&[MockAuth {
+        address: &attacker,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "update_config",
+            args: (new_settings.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    client.update_config(&new_settings);
+}
+
+#[test]
+fn update_config_succeeds_with_contract_self_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let votes_token = Address::generate(&env);
+    let timelock = Address::generate(&env);
+    let contract_id = env.register(GovernorContract, ());
+    let client = GovernorContractClient::new(&env, &contract_id);
+
+    client.initialize(
+        &admin,
+        &votes_token,
+        &timelock,
+        &100u32,
+        &1000u32,
+        &4u32,
+        &0i128,
+    );
+
+    let old_settings = client.get_settings();
+    assert_eq!(old_settings.voting_delay, 100);
+    assert_eq!(old_settings.voting_period, 1000);
+    assert_eq!(old_settings.quorum_numerator, 4);
+    assert_eq!(old_settings.proposal_threshold, 0);
+
+    let new_settings = GovernorSettings {
+        voting_delay: 200,
+        voting_period: 2000,
+        quorum_numerator: 5,
+        proposal_threshold: 1000,
+    };
+
+    client.update_config(&new_settings);
+
+    let updated = client.get_settings();
+    assert_eq!(updated.voting_delay, 200);
+    assert_eq!(updated.voting_period, 2000);
+    assert_eq!(updated.quorum_numerator, 5);
+    assert_eq!(updated.proposal_threshold, 1000);
 }

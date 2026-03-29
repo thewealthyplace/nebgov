@@ -5,6 +5,7 @@ import { VoteSupport, ProposalState, VotesClient, GovernorClient, type Network }
 import { AlertTriangle, Info, ExternalLink, Loader2 } from "lucide-react";
 import { useWallet } from "../../../lib/wallet-context";
 import { DelegateModal } from "../../../components/DelegateModal";
+import { VotingModal } from "../../../components/VotingModal";
 import { fetchProposalMetadata, verifyMetadataHash } from "../../../lib/metadata";
 import {
   BarChart,
@@ -46,9 +47,9 @@ export default function ProposalDetailPage({ params }: Props) {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   const [voted, setVoted] = useState(false);
-  const [voting, setVoting] = useState(false);
   const [selectedSupport, setSelectedSupport] = useState<VoteSupport | null>(null);
   const [delegateModalOpen, setDelegateModalOpen] = useState(false);
+  const [voteModalOpen, setVoteModalOpen] = useState(false);
   const [votingPower, setVotingPower] = useState<bigint>(0n);
   const [delegationLoading, setDelegationLoading] = useState(false);
 
@@ -150,22 +151,10 @@ export default function ProposalDetailPage({ params }: Props) {
   };
 
   const totalVotes = proposal.votesFor + proposal.votesAgainst + proposal.votesAbstain;
-  const quorumReached = proposal.quorum && totalVotes >= proposal.quorum;
 
-  async function handleVote() {
-    if (selectedSupport === null || !governorClient || !publicKey) return;
-    setVoting(true);
-    try {
-      // TODO: In a real app, use wallet kit for signing
-      console.log("Casting vote:", VoteSupport[selectedSupport]);
-      await new Promise((r) => setTimeout(r, 1500));
-      setVoted(true);
-      loadProposal();
-    } catch (err) {
-      console.error("Voting failed:", err);
-    } finally {
-      setVoting(false);
-    }
+  function handleVote() {
+    if (selectedSupport === null) return;
+    setVoteModalOpen(true);
   }
 
   if (loading) {
@@ -349,28 +338,34 @@ export default function ProposalDetailPage({ params }: Props) {
 
       {/* Voting UI */}
       {proposal.state === ProposalState.Active && !voted && (
-        <div className="bg-white border-2 border-indigo-600 rounded-xl p-6 shadow-sm">
-          <h2 className="text-lg font-bold text-gray-900 mb-4">Cast Your Vote</h2>
-          <div className="grid grid-cols-3 gap-3 mb-6">
-            {(["For", "Against", "Abstain"] as const).map((support) => (
+        <div className="bg-white border border-gray-200 rounded-xl p-6">
+          <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-4">
+            Cast Your Vote
+          </h2>
+          <div className="flex flex-col sm:flex-row gap-3 mb-4">
+            {[
+              { label: "For", value: VoteSupport.For },
+              { label: "Against", value: VoteSupport.Against },
+              { label: "Abstain", value: VoteSupport.Abstain },
+            ].map(({ label, value }) => (
               <button
-                key={support}
-                onClick={() => setSelectedSupport(VoteSupport[support])}
-                className={`py-3 rounded-lg border-2 font-medium transition-all
-                  ${selectedSupport === VoteSupport[support]
+                key={label}
+                onClick={() => setSelectedSupport(value)}
+                className={`flex-1 py-3 rounded-lg border-2 font-medium transition-all
+                  ${selectedSupport === value
                     ? "border-indigo-600 bg-indigo-50 text-indigo-700"
                     : "border-gray-100 hover:border-gray-200 text-gray-600"}`}
               >
-                {support}
+                {label}
               </button>
             ))}
           </div>
           <button
             onClick={handleVote}
-            disabled={selectedSupport === null || voting || !isConnected}
+            disabled={selectedSupport === null || !isConnected}
             className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {voting ? "Submitting vote..." : isConnected ? "Submit Vote" : "Connect Wallet to Vote"}
+            {isConnected ? "Submit Vote" : "Connect Wallet to Vote"}
           </button>
         </div>
       )}
@@ -385,6 +380,18 @@ export default function ProposalDetailPage({ params }: Props) {
         isOpen={delegateModalOpen}
         onClose={() => setDelegateModalOpen(false)}
         onSuccess={refreshDelegation}
+      />
+      <VotingModal
+        open={voteModalOpen}
+        onClose={() => setVoteModalOpen(false)}
+        proposalId={proposalId}
+        preselectedSupport={selectedSupport}
+        votingPower={votingPower}
+        onVoted={() => {
+          setVoted(true);
+          loadProposal();
+        }}
+        governorClient={governorClient}
       />
     </div>
   );
