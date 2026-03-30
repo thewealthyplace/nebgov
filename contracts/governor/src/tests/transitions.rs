@@ -70,7 +70,11 @@ fn make_proposal(env: &Env, client: &GovernorContractClient, proposer: &Address)
     let mut calldatas = soroban_sdk::Vec::new(env);
     calldatas.push_back(calldata);
 
-    client.propose(proposer, &description, &targets, &fn_names, &calldatas)
+    // Compute SHA-256 hash of the description
+    let description_hash = env.crypto().sha256(&Bytes::from_slice(env, b"Test proposal")).into();
+    let metadata_uri = String::from_str(env, "https://example.com/metadata");
+
+    client.propose(proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas)
 }
 
 fn count_topic(env: &Env, topic_name: &str) -> usize {
@@ -250,7 +254,10 @@ fn test_proposal_execution_lifecycle() {
     let targets = Vec::from_array(&env, [dummy_id.clone()]);
     let fn_names = Vec::from_array(&env, [fn_name.clone()]);
     let calldatas = Vec::from_array(&env, [calldata.clone()]);
-    let proposal_id = client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Test proposal 2")).into();
+    let metadata_uri = String::from_str(&env, "https://example.com/metadata2");
+
+    let proposal_id = client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
 
     // Proposal 2 timing:
     // start_ledger = 111 + 10 = 121

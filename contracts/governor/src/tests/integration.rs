@@ -163,8 +163,10 @@ fn test_full_proposal_lifecycle() {
     calldatas.push_back(calldata);
 
     // Ledger starts at 0; start_ledger = 0 + 10 = 10, end_ledger = 0 + 30.
+    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Upgrade protocol fee to 0.3%")).into();
+    let metadata_uri = soroban_sdk::String::from_str(&env, "ipfs://QmExample");
     let proposal_id =
-        governor_client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+        governor_client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
     assert_eq!(proposal_id, 1);
 
     // Immediately after proposal creation the state is Pending.

@@ -4,6 +4,7 @@
  * Create proposal page with simulation support.
  * TODO issue #44: add calldata encoder for on-chain execution targets.
  * Four-step proposal wizard: basics → actions (optional) → review → success.
+ * Updated with SHA-256 hashing and metadata URI support.
  */
 
 import {
@@ -16,8 +17,8 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
-import { ChevronDown, ChevronUp, Share2 } from "lucide-react";
-import { GovernorClient, VotesClient, type Network } from "@nebgov/sdk";
+import { ChevronDown, ChevronUp, Share2, Loader2, Hash, Link as LinkIcon, FileText, AlertCircle } from "lucide-react";
+import { GovernorClient, VotesClient, hashDescription, type Network } from "@nebgov/sdk";
 import {
   calldataArgRowToScVal,
   encodeGovernorCalldataBytes,
@@ -129,6 +130,25 @@ export default function ProposePage() {
     saveDraft(draft);
   }, [draft, hydrated]);
 
+  // Auto-hash description when it changes
+  useEffect(() => {
+    if (!draft.description.trim()) return;
+
+    const timer = setTimeout(async () => {
+      setIsHashing(true);
+      try {
+        const hash = await hashDescription(draft.description);
+        setDraft(d => ({ ...d, descriptionHash: hash }));
+      } catch (err) {
+        console.error("Hashing failed:", err);
+      } finally {
+        setIsHashing(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [draft.description]);
+
   useEffect(() => {
     if (step === 4 && !successIdParam) {
       router.replace("/propose?step=3");
@@ -158,6 +178,9 @@ export default function ProposePage() {
       err.push(
         "IPFS reference must be a gateway URL, ipfs:// link, or raw CID.",
       );
+    }
+    if (!draft.descriptionHash && draft.description.trim()) {
+      err.push("Waiting for description hash computation...");
     }
     return err;
   }
@@ -239,13 +262,15 @@ export default function ProposePage() {
       const id = await clients.governor.proposeWithSign(
         publicKey,
         description,
+        draft.descriptionHash,
+        draft.ipfsRef, // Metadata URI
         targets,
         fnNames,
         calldatas,
         signTransaction,
       );
       sessionStorage.removeItem(STORAGE_KEY);
-      setDraft({ title: "", description: "", ipfsRef: "", actions: [] });
+      setDraft({ title: "", description: "", descriptionHash: "", ipfsRef: "", actions: [] });
       router.push(`/propose?step=4&id=${id.toString()}`);
     } catch (e: unknown) {
       setSubmitError(e instanceof Error ? e.message : "Submit failed");
@@ -277,6 +302,8 @@ export default function ProposePage() {
     const est = await clients.governor.estimateProposeResources(
       publicKey,
       description,
+      draft.descriptionHash,
+      draft.ipfsRef,
       targets,
       fnNames,
       calldatas,
@@ -298,6 +325,7 @@ export default function ProposePage() {
     clients?.governorAddress,
     draft.title,
     draft.description,
+    draft.descriptionHash,
     draft.ipfsRef,
     draft.actions,
   ]);
@@ -320,10 +348,10 @@ export default function ProposePage() {
         actions: d.actions.map((x) =>
           x.id === act.id
             ? {
-                ...x,
-                simulateOk: res.ok,
-                simulateError: res.ok ? undefined : res.error,
-              }
+              ...x,
+              simulateOk: res.ok,
+              simulateError: res.ok ? undefined : res.error,
+            }
             : x,
         ),
       }));
@@ -333,11 +361,11 @@ export default function ProposePage() {
         actions: d.actions.map((x) =>
           x.id === act.id
             ? {
-                ...x,
-                simulateOk: false,
-                simulateError:
-                  e instanceof Error ? e.message : "Simulation failed",
-              }
+              ...x,
+              simulateOk: false,
+              simulateError:
+                e instanceof Error ? e.message : "Simulation failed",
+            }
             : x,
         ),
       }));
@@ -345,12 +373,6 @@ export default function ProposePage() {
       setSimBusy(null);
     }
   }
-
-  const belowThreshold =
-    votes !== null && threshold !== null && votes < threshold;
-
-  const reviewDataReady =
-    votes !== null && threshold !== null && !submitting;
 
   if (!clients) {
     return (
@@ -374,29 +396,27 @@ export default function ProposePage() {
 
       {/* Progress */}
       <ol className="flex items-center gap-2 mb-10 text-sm">
-          {STEPS.map((s, i) => (
-            <li key={s.id} className="flex items-center gap-2 flex-1 min-w-0">
-              <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-semibold ${
-                  step >= s.id
-                    ? "bg-indigo-600 text-white"
-                    : "bg-gray-200 text-gray-500"
+        {STEPS.map((s, i) => (
+          <li key={s.id} className="flex items-center gap-2 flex-1 min-w-0">
+            <span
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-semibold ${step >= s.id
+                  ? "bg-indigo-600 text-white"
+                  : "bg-gray-200 text-gray-500"
                 }`}
-              >
-                {s.id}
-              </span>
-              <span
-                className={`truncate hidden sm:inline ${
-                  step === s.id ? "font-semibold text-gray-900" : "text-gray-500"
+            >
+              {s.id}
+            </span>
+            <span
+              className={`truncate hidden sm:inline ${step === s.id ? "font-semibold text-gray-900" : "text-gray-500"
                 }`}
-              >
-                {s.label}
-              </span>
-              {i < STEPS.length - 1 && (
-                <span className="h-px flex-1 bg-gray-200 min-w-[12px] hidden md:block" />
-              )}
-            </li>
-          ))}
+            >
+              {s.label}
+            </span>
+            {i < STEPS.length - 1 && (
+              <span className="h-px flex-1 bg-gray-200 min-w-[12px] hidden md:block" />
+            )}
+          </li>
+        ))}
       </ol>
 
       {step === 1 && (
@@ -435,8 +455,13 @@ export default function ProposePage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center justify-between">
                 Preview
+                {isHashing && (
+                  <span className="text-[10px] text-indigo-600 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Hashing...
+                  </span>
+                )}
               </label>
               <div className="min-h-[18rem] border border-gray-200 rounded-lg p-3 bg-gray-50/80 text-sm text-gray-800 overflow-auto prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-headings:font-semibold prose-a:text-indigo-600">
                 {draft.description.trim() ? (
@@ -449,7 +474,7 @@ export default function ProposePage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              IPFS attachment (optional)
+              Metadata Uri / IPFS Attachment
             </label>
             <input
               type="text"
@@ -457,12 +482,11 @@ export default function ProposePage() {
               onChange={(e) =>
                 setDraft((d) => ({ ...d, ipfsRef: e.target.value }))
               }
-              placeholder="https://… , ipfs://… , or CID"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+              placeholder="ipfs://… or https://…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 font-mono"
             />
             <p className="text-xs text-gray-400 mt-1">
-              Pin content separately, then paste a gateway link or CID. Stored in the
-              on-chain description.
+              Points to the full proposal metadata. The description above will be hashed and stored on-chain.
             </p>
           </div>
         </div>
@@ -605,23 +629,23 @@ export default function ProposePage() {
                             actions: d.actions.map((x) =>
                               x.id === act.id
                                 ? {
-                                    ...x,
-                                    args: x.args.map((r) =>
-                                      r.id === row.id ? { ...r, kind } : r,
-                                    ),
-                                    simulateOk: null,
-                                  }
+                                  ...x,
+                                  args: x.args.map((r) =>
+                                    r.id === row.id ? { ...r, kind } : r,
+                                  ),
+                                  simulateOk: null,
+                                }
                                 : x,
                             ),
                           }));
                         }}
-                        className="border rounded-md text-xs py-1"
+                        className="bg-gray-50 border rounded text-xs px-1 py-1"
                       >
-                        <option value="address">address</option>
-                        <option value="i128">i128</option>
+                        <option value="address">Address</option>
+                        <option value="string">String</option>
                         <option value="u64">u64</option>
-                        <option value="string">string</option>
-                        <option value="bool">bool</option>
+                        <option value="i128">i128</option>
+                        <option value="bool">Bool</option>
                       </select>
                       <input
                         value={row.value}
@@ -632,17 +656,18 @@ export default function ProposePage() {
                             actions: d.actions.map((x) =>
                               x.id === act.id
                                 ? {
-                                    ...x,
-                                    args: x.args.map((r) =>
-                                      r.id === row.id ? { ...r, value: v } : r,
-                                    ),
-                                    simulateOk: null,
-                                  }
+                                  ...x,
+                                  args: x.args.map((r) =>
+                                    r.id === row.id ? { ...r, value: v } : r,
+                                  ),
+                                  simulateOk: null,
+                                }
                                 : x,
                             ),
                           }));
                         }}
-                        className="flex-1 min-w-[6rem] border rounded-md px-2 py-1 text-sm font-mono"
+                        placeholder="Value"
+                        className="flex-1 min-w-[120px] border border-gray-200 rounded px-2 py-1 text-xs font-mono"
                       />
                       <button
                         type="button"
@@ -652,35 +677,37 @@ export default function ProposePage() {
                             actions: d.actions.map((x) =>
                               x.id === act.id
                                 ? {
-                                    ...x,
-                                    args: x.args.filter((r) => r.id !== row.id),
-                                    simulateOk: null,
-                                  }
+                                  ...x,
+                                  args: x.args.filter((r) => r.id !== row.id),
+                                  simulateOk: null,
+                                }
                                 : x,
                             ),
                           }))
                         }
-                        className="text-xs text-red-600"
+                        className="text-gray-400 hover:text-red-500"
                       >
                         ×
                       </button>
                     </div>
                   ))}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="pt-2 flex items-center justify-between">
                   <button
                     type="button"
                     disabled={!act.target.trim() || !act.fnName.trim() || simBusy === act.id}
-                    onClick={() => void simulateAction(act)}
-                    className="text-sm px-3 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-900 disabled:opacity-50"
+                    onClick={() => simulateAction(act)}
+                    className="text-xs bg-gray-100 px-3 py-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-50"
                   >
-                    {simBusy === act.id ? "Simulating…" : "Simulate"}
+                    {simBusy === act.id ? "Simulating..." : "Simulate action"}
                   </button>
                   {act.simulateOk === true && (
-                    <span className="text-xs font-medium text-green-700">Simulation OK</span>
+                    <span className="text-xs text-green-600 font-medium">✓ Ready</span>
                   )}
                   {act.simulateOk === false && (
-                    <span className="text-xs text-red-600">{act.simulateError}</span>
+                    <span className="text-xs text-red-600 font-medium">
+                      {act.simulateError ? `Error: ${act.simulateError}` : "Simulation failed"}
+                    </span>
                   )}
                 </div>
                 {act.args.length > 0 && act.args.some((r) => r.value.trim() !== "") && (
@@ -700,69 +727,103 @@ export default function ProposePage() {
       )}
 
       {step === 3 && (
-        <div className="space-y-6">
-          <div className="border border-gray-200 rounded-xl p-4 bg-gray-50/80 space-y-2 text-sm">
-            <p className="font-semibold text-gray-900">{draft.title.trim()}</p>
-            <div className="text-gray-700 whitespace-pre-wrap border-t border-gray-100 pt-2 max-h-48 overflow-auto">
-              {buildDescription(draft.title, draft.description, draft.ipfsRef)}
-            </div>
-            <p className="text-xs text-gray-500">
-              {draft.actions.length === 0
-                ? "Actions: default governor proposal_count placeholder"
-                : `Actions: ${draft.actions.length} on-chain call(s), order preserved.`}
-            </p>
-          </div>
-
-          {!isConnected && (
-            <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">
-              Connect your wallet to check voting power and submit.
-            </p>
-          )}
-
-          {isConnected && publicKey && (
-            <div className="space-y-2 text-sm">
-              <p>
-                <span className="text-gray-500">Your votes:</span>{" "}
-                <span className="font-mono font-medium">{votes?.toString() ?? "…"}</span>
-              </p>
-              <p>
-                <span className="text-gray-500">Proposal threshold:</span>{" "}
-                <span className="font-mono font-medium">
-                  {threshold?.toString() ?? "…"}
-                </span>
-              </p>
-              {belowThreshold && (
-                <p className="text-red-700 font-medium bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-                  Voting power is below the proposal threshold. You need at least{" "}
-                  {threshold?.toString()} votes (currently {votes?.toString()}). Delegate or
-                  acquire voting power before submitting.
+        <div className="space-y-8">
+          <div className="bg-white border border-gray-200 rounded-xl p-6">
+            <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-4">
+              Review Content
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs text-gray-400 font-medium uppercase mb-1">Title</p>
+                <p className="text-lg font-bold text-gray-900">{draft.title}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 font-medium uppercase mb-1">Description Hash (SHA-256)</p>
+                <p className="text-sm font-mono text-gray-600 bg-gray-50 px-2 py-1 rounded">
+                  {draft.descriptionHash || "Computing..."}
                 </p>
+              </div>
+              <div className="prose prose-sm max-w-none text-gray-800 bg-gray-50 p-4 rounded-xl">
+                <ReactMarkdown>{draft.description}</ReactMarkdown>
+              </div>
+              {draft.ipfsRef && (
+                <div className="flex items-center gap-2 text-xs text-indigo-600">
+                  <LinkIcon className="w-3 h-3" />
+                  <span className="font-medium">Metadata URI:</span>
+                  <span className="font-mono">{draft.ipfsRef}</span>
+                </div>
               )}
             </div>
-          )}
+          </div>
 
-          <div className="border border-gray-200 rounded-xl p-4 text-sm">
-            <p className="font-medium text-gray-900 mb-1">Estimated simulation cost</p>
-            {estimateErr && (
-              <p className="text-amber-800 text-xs">{estimateErr}</p>
-            )}
-            {estimate && (
-              <ul className="text-xs text-gray-600 space-y-1 font-mono">
-                {estimate.cpuInsns && <li>CPU instructions: {estimate.cpuInsns}</li>}
-                {estimate.memBytes && <li>Memory (bytes): {estimate.memBytes}</li>}
-                {!estimate.cpuInsns && !estimate.memBytes && (
-                  <li>Simulation succeeded — fee will include base + resource charges.</li>
-                )}
+          <div className="bg-white border border-gray-200 rounded-xl p-6">
+            <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-4">
+              On-chain actions
+            </h2>
+            {draft.actions.length === 0 ? (
+              <p className="text-sm text-gray-500 italic">No on-chain actions (signal only).</p>
+            ) : (
+              <ul className="space-y-4">
+                {draft.actions.map((act, i) => (
+                  <li key={i} className="text-sm font-mono bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <div className="text-indigo-600 mb-1">{act.target}</div>
+                    <div className="text-gray-900">{act.fnName}({act.args.map(a => a.value).join(', ')})</div>
+                  </li>
+                ))}
               </ul>
-            )}
-            {!estimate && !estimateErr && publicKey && (
-              <p className="text-xs text-gray-400">Estimating…</p>
             )}
           </div>
 
-          {submitError && (
-            <p className="text-red-600 text-sm">{submitError}</p>
-          )}
+          <div className="bg-white border border-gray-200 rounded-xl p-6">
+            <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-6">
+              Submission check
+            </h2>
+            <div className="space-y-6">
+              {!isConnected ? (
+                <div className="flex items-center gap-2 text-amber-700 bg-amber-50 p-4 rounded-xl text-sm">
+                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  Please connect your wallet to verify permissions.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-xs text-gray-400 font-medium uppercase mb-1">Your Votes</p>
+                    <p className="text-xl font-bold text-gray-900">
+                      {votes === null ? "..." : (Number(votes) / 10 ** 7).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 font-medium uppercase mb-1">Threshold</p>
+                    <p className="text-xl font-bold text-gray-900">
+                      {threshold === null ? "..." : (Number(threshold) / 10 ** 7).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {estimate && (
+                <div className="border-t border-gray-100 pt-6">
+                  <p className="text-xs text-gray-400 font-medium uppercase mb-3">Resource Estimate</p>
+                  <div className="flex gap-6 text-sm">
+                    <div>
+                      <span className="text-gray-500 mr-2">CPU:</span>
+                      <span className="font-mono font-medium">{Number(estimate.cpuInsns).toLocaleString()} cycles</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 mr-2">RAM:</span>
+                      <span className="font-mono font-medium">{(Number(estimate.memBytes) / 1024).toFixed(1)} KB</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {estimateErr && (
+                <div className="p-3 bg-red-50 text-red-600 text-xs rounded-lg border border-red-100">
+                  Simulation Warning: {estimateErr}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -864,36 +925,16 @@ export default function ProposePage() {
           <div className="flex flex-wrap justify-center gap-3">
             <Link
               href={`/proposal/${successIdParam}`}
-              className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700"
+              className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
             >
-              Open proposal
+              View Proposal
             </Link>
             <button
-              type="button"
-              onClick={async () => {
-                const url = `${window.location.origin}/proposal/${successIdParam}`;
-                try {
-                  if (navigator.share) {
-                    await navigator.share({ title: "Governance proposal", url });
-                  } else {
-                    await navigator.clipboard.writeText(url);
-                    alert("Link copied to clipboard.");
-                  }
-                } catch {
-                  await navigator.clipboard.writeText(url);
-                }
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 font-medium text-gray-800 hover:bg-gray-50"
+              onClick={() => router.push("/")}
+              className="text-gray-600 px-6 py-2 rounded-lg font-medium hover:bg-gray-100 transition-colors"
             >
-              <Share2 className="w-4 h-4" />
-              Share
+              Back to list
             </button>
-            <Link
-              href="/propose?step=1"
-              className="inline-flex items-center justify-center px-4 py-2 rounded-lg text-indigo-600 font-medium hover:underline"
-            >
-              Create another
-            </Link>
           </div>
         </div>
       )}
@@ -915,48 +956,44 @@ export default function ProposePage() {
       )}
 
       {step < 4 && (
-        <div className="flex justify-between mt-10 gap-4">
+        <div className="mt-12 flex items-center justify-between pt-6 border-t border-gray-200">
           <button
-            type="button"
-            disabled={step <= 1}
-            onClick={() => setStep(step - 1)}
-            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+            onClick={() => step > 1 && setStep(step - 1)}
+            disabled={step === 1 || submitting}
+            className="text-sm font-medium text-gray-600 hover:text-gray-900 disabled:opacity-30"
           >
             Back
           </button>
-          <button
-            type="button"
-            disabled={
-              (step === 3 &&
-                (!isConnected ||
-                  !reviewDataReady ||
-                  belowThreshold)) ||
-              submitting
-            }
-            onClick={() => goNext()}
-            className="px-5 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {step === 3
-              ? submitting
-                ? "Submitting…"
-                : "Submit on-chain"
-              : "Next"}
-          </button>
+
+          <div className="flex items-center gap-3">
+            {stepErrors.length > 0 && (
+              <span className="text-xs text-red-600 font-medium">
+                {stepErrors[0]}
+              </span>
+            )}
+            <button
+              onClick={goNext}
+              disabled={submitting || (step === 3 && !reviewDataReady)}
+              className="bg-indigo-600 text-white px-8 py-2.5 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors min-w-[120px]"
+            >
+              {submitting ? "Submitting..." : step === 3 ? "Submit Proposal" : "Continue"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {submitError && (
+        <div className="mt-6 p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm">
+          {submitError}
         </div>
       )}
     </div>
   );
 }
 
-export default function ProposePage() {
+export default function ProposeWizard() {
   return (
-    <Suspense
-      fallback={
-        <div className="max-w-3xl mx-auto px-4 py-16 text-center text-gray-500 text-sm">
-          Loading wizard…
-        </div>
-      }
-    >
+    <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading wizard...</div>}>
       <ProposeWizardInner />
     </Suspense>
   );

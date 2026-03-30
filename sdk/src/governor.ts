@@ -20,6 +20,7 @@ import {
   Network,
   UnknownProposalStateError,
 } from "./types";
+import { hexToBytes32 } from "./utils";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban-rpc.mainnet.stellar.gateway.fm",
@@ -73,11 +74,20 @@ export class GovernorClient {
   /**
    * Create a new governance proposal (multi-action, matching on-chain `propose`).
    *
+   * @param signer The account proposing the change
+   * @param description A brief summary of the proposal
+   * @param descriptionHash SHA-256 hash of the full description (hex string)
+   * @param metadataUri URI pointing to the full description (ipfs:// or https://)
    * @param targets Calldata targets (same length as `fnNames` / `calldatas`)
+   * @param fnNames Function names on each target
+   * @param calldatas Encoded arguments for each call
+   * @returns The unique identifier of the created proposal
    */
   async propose(
     signer: Keypair,
     description: string,
+    descriptionHash: string,
+    metadataUri: string,
     targets: string[],
     fnNames: string[],
     calldatas: (Buffer | Uint8Array)[],
@@ -94,6 +104,9 @@ export class GovernorClient {
       throw new Error("At least one on-chain action is required");
     }
 
+    // Convert hex string to BytesN<32>
+    const hashBytes = hexToBytes32(descriptionHash);
+
     const account = await this.server.getAccount(signer.publicKey());
 
     const tx = new TransactionBuilder(account, {
@@ -105,6 +118,8 @@ export class GovernorClient {
           "propose",
           nativeToScVal(signer.publicKey(), { type: "address" }),
           nativeToScVal(description, { type: "string" }),
+          nativeToScVal(hashBytes, { type: "bytes" }),
+          nativeToScVal(metadataUri, { type: "string" }),
           scVecAddress(targets),
           scVecSymbol(fnNames),
           scVecBytes(calldatas),
@@ -132,6 +147,8 @@ export class GovernorClient {
   async proposeWithSign(
     signerPublicKey: string,
     description: string,
+    descriptionHash: string,
+    metadataUri: string,
     targets: string[],
     fnNames: string[],
     calldatas: (Buffer | Uint8Array)[],
@@ -149,6 +166,8 @@ export class GovernorClient {
       throw new Error("At least one on-chain action is required");
     }
 
+    const hashBytes = hexToBytes32(descriptionHash);
+
     const account = await this.server.getAccount(signerPublicKey);
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -159,6 +178,8 @@ export class GovernorClient {
           "propose",
           nativeToScVal(signerPublicKey, { type: "address" }),
           nativeToScVal(description, { type: "string" }),
+          nativeToScVal(hashBytes, { type: "bytes" }),
+          nativeToScVal(metadataUri, { type: "string" }),
           scVecAddress(targets),
           scVecSymbol(fnNames),
           scVecBytes(calldatas),
@@ -244,6 +265,8 @@ export class GovernorClient {
   async estimateProposeResources(
     proposer: string,
     description: string,
+    descriptionHash: string,
+    metadataUri: string,
     targets: string[],
     fnNames: string[],
     calldatas: (Buffer | Uint8Array)[],
@@ -254,6 +277,7 @@ export class GovernorClient {
     memBytes?: string;
   }> {
     try {
+      const hashBytes = hexToBytes32(descriptionHash);
       const account = await this.server.getAccount(proposer);
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
@@ -264,6 +288,8 @@ export class GovernorClient {
             "propose",
             nativeToScVal(proposer, { type: "address" }),
             nativeToScVal(description, { type: "string" }),
+            nativeToScVal(hashBytes, { type: "bytes" }),
+            nativeToScVal(metadataUri, { type: "string" }),
             scVecAddress(targets),
             scVecSymbol(fnNames),
             scVecBytes(calldatas),
@@ -617,4 +643,89 @@ export class GovernorClient {
     }
     throw new Error(`Transaction not confirmed after ${retries} retries`);
   }
+
+  /**
+   * Fetch a proposal by its ID.
+   */
+  async getProposal(proposalId: bigint): Promise<Proposal> {
+    const result = await this.server.simulateTransaction(
+      new TransactionBuilder(
+        await this.server.getAccount(this.config.governorAddress),
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+      )
+        .addOperation(
+          this.contract.call("get_proposal", nativeToScVal(proposalId, { type: "u64" }))
+        )
+        .setTimeout(30)
+        .build()
+    );
+
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation error: ${result.error}`);
+    }
+
+    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+      .result?.retval;
+    if (!raw) throw new Error("No return value");
+
+    return scValToNative(raw) as Proposal;
+  }
+}
+
+/**
+ * Compute SHA-256 hash of a proposal description.
+ *
+ * This function uses the Web Crypto API in browser environments and
+ * Node.js crypto module in server-side environments. The input is
+ * UTF-8 encoded before hashing, and the output is a 64-character
+ * lowercase hex string.
+ *
+ * @param text - The proposal description text to hash
+ * @returns Hex-encoded SHA-256 hash (64 lowercase characters)
+ */
+export async function hashDescription(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+
+  // Use Web Crypto API (available in both browser and Node.js 18+)
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // Fallback to Node.js crypto module
+  if (typeof require !== "undefined") {
+    try {
+      const cryptoNode = require("crypto");
+      const hash = cryptoNode.createHash("sha256").update(data).digest("hex");
+      return hash;
+    } catch (e) {
+      // ignore and try next fallback
+    }
+  }
+
+  throw new Error("No crypto API available in this environment");
+}
+
+/**
+ * Synchronous version of hashDescription for environments where async is not needed.
+ * Uses the same algorithm and encoding.
+ */
+export function hashDescriptionSync(text: string): string {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+
+  // Try Node.js crypto first (synchronous)
+  if (typeof require !== "undefined") {
+    try {
+      const cryptoNode = require("crypto");
+      const hash = cryptoNode.createHash("sha256").update(data).digest("hex");
+      return hash;
+    } catch (e) {
+      // ignore and try next fallback
+    }
+  }
+
+  throw new Error("Synchronous SHA-256 is only available in Node.js environments. Use async hashDescription instead.");
 }

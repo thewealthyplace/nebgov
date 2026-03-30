@@ -104,6 +104,10 @@ pub struct Proposal {
     pub id: u64,
     pub proposer: Address,
     pub description: String,
+    /// SHA-256 hash of the off-chain proposal description for content integrity verification.
+    pub description_hash: BytesN<32>,
+    /// URI pointing to the full proposal description content (supports ipfs:// and https://).
+    pub metadata_uri: String,
     /// Contract addresses that will be invoked when the proposal executes.
     pub targets: Vec<Address>,
     /// Function names invoked on each target. Each element corresponds to the
@@ -244,6 +248,14 @@ pub enum DataKey {
     ProposalPeriodDuration,
 }
 
+/// Errors returned by the governor contract.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum GovernorError {
+    /// Proposal metadata URI cannot be empty.
+    EmptyMetadataUri = 1,
+}
+
 #[contract]
 pub struct GovernorContract;
 
@@ -352,6 +364,8 @@ impl GovernorContract {
         env: Env,
         proposer: Address,
         description: String,
+        description_hash: BytesN<32>,
+        metadata_uri: String,
         targets: Vec<Address>,
         fn_names: Vec<Symbol>,
         calldatas: Vec<Bytes>,
@@ -467,6 +481,8 @@ impl GovernorContract {
             id: proposal_id,
             proposer: proposer.clone(),
             description: description.clone(),
+            description_hash: description_hash.clone(),
+            metadata_uri: metadata_uri.clone(),
             targets: targets.clone(),
             fn_names: fn_names.clone(),
             calldatas: calldatas.clone(),
@@ -502,6 +518,8 @@ impl GovernorContract {
             (
                 proposal_id,
                 description,
+                description_hash,
+                metadata_uri,
                 targets,
                 fn_names,
                 calldatas,
@@ -1489,6 +1507,12 @@ mod test {
         let calldata = Bytes::new(env);
         let description = String::from_str(env, "Test proposal");
 
+        // Compute SHA-256 hash of the description
+        let description_hash = env.crypto().sha256(&Bytes::from_slice(env, b"Test proposal")).into();
+
+        // Dummy metadata URI (could be ipfs or https)
+        let metadata_uri = String::from_str(env, "https://example.com/proposal/1");
+
         // Create Vec with single target, fn_name, and calldata
         let mut targets = soroban_sdk::Vec::new(env);
         targets.push_back(target);
@@ -1499,7 +1523,15 @@ mod test {
         let mut calldatas = soroban_sdk::Vec::new(env);
         calldatas.push_back(calldata);
 
-        client.propose(proposer, &description, &targets, &fn_names, &calldatas)
+        client.propose(
+            proposer,
+            &description,
+            &description_hash,
+            &metadata_uri,
+            &targets,
+            &fn_names,
+            &calldatas,
+        )
     }
 
     #[test]
@@ -1681,7 +1713,10 @@ mod test {
         calldatas.push_back(calldata1.clone());
         calldatas.push_back(calldata2.clone());
 
-        let proposal_id = client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+        let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Multi-target proposal")).into();
+        let metadata_uri = String::from_str(&env, "ipfs://QmMulti");
+
+        let proposal_id = client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
 
         // Verify proposal was created
         assert_eq!(proposal_id, 1);
@@ -1720,8 +1755,11 @@ mod test {
         calldatas.push_back(calldata1);
         calldatas.push_back(calldata2); // Extra calldata
 
+        let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Mismatched proposal")).into();
+        let metadata_uri = String::from_str(&env, "ipfs://QmMismatch");
+
         // Should panic with "targets, fn_names, and calldatas length mismatch"
-        client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+        client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
     }
 
     #[test]
@@ -1745,8 +1783,11 @@ mod test {
         let fn_names = soroban_sdk::Vec::new(&env);
         let calldatas = soroban_sdk::Vec::new(&env);
 
+        let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Empty proposal")).into();
+        let metadata_uri = String::from_str(&env, "ipfs://QmEmpty");
+
         // Should panic with "must have at least one target"
-        client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+        client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
     }
 
     /// Mock oracle contract that returns a fixed price for dynamic quorum tests.

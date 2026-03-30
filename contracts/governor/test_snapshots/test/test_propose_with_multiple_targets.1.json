@@ -75,6 +75,12 @@
                   "string": "Multi-target proposal"
                 },
                 {
+                  "bytes": "aa9af08aa1d830f9ddd960e14ca1def6dffaf4da22bb02496f3c8373c74192a2"
+                },
+                {
+                  "string": "ipfs://QmMulti"
+                },
+                {
                   "vec": [
                     {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
@@ -193,6 +199,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "description_hash"
+                      },
+                      "val": {
+                        "bytes": "aa9af08aa1d830f9ddd960e14ca1def6dffaf4da22bb02496f3c8373c74192a2"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "end_ledger"
                       },
                       "val": {
@@ -228,6 +242,14 @@
                       },
                       "val": {
                         "u64": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "metadata_uri"
+                      },
+                      "val": {
+                        "string": "ipfs://QmMulti"
                       }
                     },
                     {

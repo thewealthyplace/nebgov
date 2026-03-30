@@ -323,6 +323,8 @@ describe("GovernorClient", () => {
       const id = await client.propose(
         mockKeypair,
         "Test proposal",
+        "3665313936616466316231366230623362346231613963316131613262336334",
+        "ipfs://QmTest",
         [validCAddr],
         ["upgrade"],
         [Buffer.from([1, 2, 3])]
@@ -342,6 +344,8 @@ describe("GovernorClient", () => {
         client.propose(
           mockKeypair,
           "Test proposal",
+          "3665313936616466316231366230623362346231613963316131613262336334",
+          "ipfs://QmTest",
           [validCAddr],
           ["upgrade"],
           [Buffer.from([1, 2, 3])]
@@ -371,6 +375,8 @@ describe("GovernorClient", () => {
         client.propose(
           mockKeypair,
           "Test proposal",
+          "3665313936616466316231366230623362346231613963316131613262336334",
+          "ipfs://QmTest",
           [validCAddr],
           ["upgrade"],
           [Buffer.from([1, 2, 3])]
@@ -400,6 +406,8 @@ describe("GovernorClient", () => {
       const promise = client.propose(
         mockKeypair,
         "Test proposal",
+        "3665313936616466316231366230623362346231613963316131613262336334",
+        "ipfs://QmTest",
         [validCAddr],
         ["upgrade"],
         [Buffer.from([1, 2, 3])]
