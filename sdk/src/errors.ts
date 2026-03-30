@@ -236,6 +236,73 @@ export function parseTimelockError(
   );
 }
 
+// ─── Treasury Errors ──────────────────────────────────────────────────────────
+
+/**
+ * Error codes for the Treasury contract + SDK transport layer.
+ *
+ * Codes 1–99 mirror on-chain contract error values; SDK-level codes start at 100.
+ */
+export enum TreasuryErrorCode {
+  // SDK-level codes
+  SimulationFailed   = 100,
+  TransactionFailed  = 101,
+  TransactionTimeout = 102,
+  MissingReturnValue = 103,
+  InvalidArguments   = 104,
+}
+
+const TREASURY_MESSAGES: Record<TreasuryErrorCode, string> = {
+  [TreasuryErrorCode.SimulationFailed]:   "Simulation failed",
+  [TreasuryErrorCode.TransactionFailed]:  "Transaction failed",
+  [TreasuryErrorCode.TransactionTimeout]: "Transaction timed out",
+  [TreasuryErrorCode.MissingReturnValue]: "No return value from contract",
+  [TreasuryErrorCode.InvalidArguments]:   "Invalid arguments",
+};
+
+export class TreasuryError extends Error {
+  readonly name = "TreasuryError";
+
+  constructor(
+    public readonly code: TreasuryErrorCode,
+    message: string,
+    public readonly cause?: unknown
+  ) {
+    super(message);
+    Object.setPrototypeOf(this, TreasuryError.prototype);
+  }
+}
+
+/**
+ * Parse a raw Soroban RPC error into a typed {@link TreasuryError}.
+ */
+export function parseTreasuryError(
+  raw: SorobanRpcError,
+  cause?: unknown
+): TreasuryError {
+  const contractCode = extractContractErrorCode(raw);
+  if (contractCode !== null) {
+    const code = contractCode as TreasuryErrorCode;
+    const message =
+      TREASURY_MESSAGES[code] ?? `Treasury contract error #${contractCode}`;
+    return new TreasuryError(code, message, cause);
+  }
+
+  if (raw.status === "ERROR") {
+    return new TreasuryError(
+      TreasuryErrorCode.TransactionFailed,
+      `${TREASURY_MESSAGES[TreasuryErrorCode.TransactionFailed]}: ${raw.error ?? "unknown"}`,
+      cause
+    );
+  }
+
+  return new TreasuryError(
+    TreasuryErrorCode.SimulationFailed,
+    `${TREASURY_MESSAGES[TreasuryErrorCode.SimulationFailed]}: ${raw.error ?? "unknown"}`,
+    cause
+  );
+}
+
 /**
  * Parse a raw Soroban RPC error into a typed {@link VotesError}.
  */

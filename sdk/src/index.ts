@@ -15,6 +15,7 @@
 export { GovernorClient } from "./governor";
 export { VotesClient } from "./votes";
 export { TimelockClient } from "./timelock";
+export { TreasuryClient } from "./treasury";
 export {
   GovernorError,
   GovernorErrorCode,
@@ -22,9 +23,12 @@ export {
   TimelockErrorCode,
   VotesError,
   VotesErrorCode,
+  TreasuryError,
+  TreasuryErrorCode,
   parseGovernorError,
   parseTimelockError,
   parseVotesError,
+  parseTreasuryError,
   extractContractErrorCode,
 } from "./errors";
 export type { SorobanRpcError } from "./errors";

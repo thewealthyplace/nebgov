@@ -144,3 +144,23 @@ export interface DelegatorInfo {
   /** Voting power this delegator contributes to the delegate */
   power: bigint;
 }
+
+// ─── Treasury Types ───────────────────────────────────────────────────────────
+
+/** Configuration for {@link TreasuryClient}. */
+export interface TreasuryConfig {
+  /** Contract address of the treasury */
+  treasuryAddress: string;
+  /** Stellar network to connect to */
+  network: Network;
+  /** RPC URL override (optional — defaults to public horizon) */
+  rpcUrl?: string;
+}
+
+/** A single recipient in a batch transfer operation. */
+export interface BatchTransferRecipient {
+  /** Stellar strkey address of the recipient */
+  address: string;
+  /** Amount of tokens to transfer (in the token's base unit) */
+  amount: bigint;
+}
