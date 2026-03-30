@@ -74,6 +74,23 @@ describe("getProposalTimeInfo", () => {
     expect(result?.targetLedger).toBe(1200);
   });
 
+  it("returns veto window info for Queued state when window is open", () => {
+    const result = getProposalTimeInfo("Queued", 1000, 1200, 1100, 1300);
+    expect(result).not.toBeNull();
+    expect(result?.label).toBe("Veto window closes in");
+    expect(result?.targetLedger).toBe(1300);
+  });
+
+  it("returns null for Queued state when veto window is closed", () => {
+    const result = getProposalTimeInfo("Queued", 1000, 1200, 1300, 1200);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for Queued state without vetoWindowCloseLedger", () => {
+    const result = getProposalTimeInfo("Queued", 1000, 1200, 1100);
+    expect(result).toBeNull();
+  });
+
   it("returns null for non-time-sensitive states", () => {
     expect(getProposalTimeInfo("Succeeded", 1000, 1200, 1300)).toBeNull();
     expect(getProposalTimeInfo("Defeated", 1000, 1200, 1300)).toBeNull();

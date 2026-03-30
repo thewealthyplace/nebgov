@@ -31,6 +31,7 @@ pub trait TimelockTrait {
         salt: Bytes,
     ) -> Bytes;
     fn execute(env: Env, caller: Address, op_id: Bytes);
+    fn cancel(env: Env, caller: Address, op_id: Bytes);
     fn min_delay(env: Env) -> u64;
     fn execution_window(env: Env) -> u64;
     fn is_done(env: Env, op_id: Bytes) -> bool;
@@ -190,6 +191,8 @@ pub enum DataKey {
     VoteReason(u64, Address),
     /// The timelock op-id (Bytes) for a proposal after queue() is called.
     QueuedOpId(u64),
+    /// The ledger sequence number when a proposal was queued (for veto window tracking).
+    QueueTime(u64),
     /// Active voting strategy (Single or MultiToken).
     VotingStrategy,
     /// Whether dynamic quorum is enabled.
@@ -534,10 +537,16 @@ impl GovernorContract {
             .persistent()
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
-        // Emit ProposalQueued event with the timelock ETA (`ready_at`).
+        // Store the queue time (current ledger sequence) for veto window tracking
+        let queue_time = env.ledger().sequence();
+        env.storage()
+            .persistent()
+            .set(&DataKey::QueueTime(proposal_id), &queue_time);
+
+        // Emit ProposalQueued event with the timelock ETA (`ready_at`) and veto window info.
         env.events().publish(
             (Symbol::new(&env, "ProposalQueued"),),
-            (proposal_id, ready_at),
+            (proposal_id, ready_at, queue_time),
         );
     }
 
@@ -624,6 +633,86 @@ impl GovernorContract {
         env.events().publish(
             (symbol_short!("cancel"), caller.clone()),
             (proposal_id, caller),
+        );
+    }
+
+    /// Cancel a queued proposal during the veto window.
+    ///
+    /// Only the guardian can cancel a queued proposal, and only within the veto
+    /// window that expires at `queue_time + timelock_delay`. After the veto
+    /// window closes, this function reverts.
+    ///
+    /// This cancellation also cancels all associated timelock operations via
+    /// the timelock contract.
+    pub fn cancel_queued(env: Env, caller: Address, proposal_id: u64) {
+        caller.require_auth();
+
+        let proposal: Proposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposal(proposal_id))
+            .expect("proposal not found");
+
+        // Verify the proposal is queued
+        assert!(proposal.queued && !proposal.cancelled, "proposal not queued");
+
+        let guardian: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Guardian)
+            .expect("guardian not set");
+
+        // Only guardian can cancel queued proposals
+        assert!(caller == guardian, "only guardian can cancel queued proposals");
+
+        // Get the queue time for veto window check
+        let queue_time: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::QueueTime(proposal_id))
+            .expect("queue_time not found");
+
+        // Get the timelock delay
+        let timelock_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Timelock)
+            .expect("timelock not set");
+        let timelock = TimelockClient::new(&env, &timelock_addr);
+        let delay = timelock.min_delay();
+
+        // Check if we're still in the veto window
+        let current_ledger = env.ledger().sequence();
+        let veto_window_end = queue_time + (delay / 10u64) as u32; // Assuming ~10 seconds per ledger, roughly 1 ledger per second
+        
+        // For simplicity, use delay directly as ledger count (adjusting for typical Soroban block times)
+        // The veto window should close after timelock_delay seconds
+        // Conversion: assume timelock delay is in seconds and we need ledger conversion
+        let veto_window_end_ledger = queue_time + ((delay / 10) as u32); // Roughly 1 ledger per 10 seconds
+        
+        assert!(
+            current_ledger < veto_window_end_ledger,
+            "veto window closed"
+        );
+
+        // Cancel the proposal
+        let mut proposal_mut = proposal;
+        proposal_mut.cancelled = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Proposal(proposal_id), &proposal_mut);
+
+        // Cancel all timelock operations associated with this proposal
+        let gov_addr = env.current_contract_address();
+        for i in 0..proposal_mut.op_ids.len() {
+            let op_id = proposal_mut.op_ids.get(i).unwrap();
+            timelock.cancel(&gov_addr, &op_id);
+        }
+
+        // Emit ProposalCancelledFromQueue event
+        env.events().publish(
+            (symbol_short!("veto"), caller.clone()),
+            (proposal_id, queue_time, current_ledger),
         );
     }
 

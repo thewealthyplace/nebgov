@@ -60,7 +60,7 @@ export function parseProposalCreatedEvent(
 
 export function parseProposalQueuedEvent(
   event: SorobanEvent
-): { proposalId: bigint; readyAt: bigint } | null {
+): { proposalId: bigint; readyAt: bigint; queueTime?: bigint } | null {
   if (event.topic[0] !== "ProposalQueued") return null;
   const raw = event.value;
   if (!Array.isArray(raw) || raw.length < 2) return null;
@@ -68,6 +68,32 @@ export function parseProposalQueuedEvent(
     return {
       proposalId: BigInt(raw[0] as number | bigint | string),
       readyAt: BigInt(raw[1] as number | bigint | string),
+      // queueTime is optional for backward compatibility
+      queueTime: raw.length >= 3 ? BigInt(raw[2] as number | bigint | string) : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Decoded `veto` (proposal vetoed from queue) event */
+export interface ProposalVetoedEventData {
+  proposalId: bigint;
+  queueTime: bigint;
+  currentLedger: bigint;
+}
+
+export function parseProposalVetoedEvent(
+  event: SorobanEvent
+): ProposalVetoedEventData | null {
+  if (event.topic[0] !== "veto") return null;
+  const raw = event.value;
+  if (!Array.isArray(raw) || raw.length < 3) return null;
+  try {
+    return {
+      proposalId: BigInt(raw[0] as number | bigint | string),
+      queueTime: BigInt(raw[1] as number | bigint | string),
+      currentLedger: BigInt(raw[2] as number | bigint | string),
     };
   } catch {
     return null;

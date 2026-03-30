@@ -28,10 +28,12 @@ export type {
   SorobanEvent,
   SubscriptionOptions,
   ProposalCreatedEventData,
+  ProposalVetoedEventData,
 } from "./events";
 export {
   parseProposalCreatedEvent,
   parseProposalQueuedEvent,
+  parseProposalVetoedEvent,
   parseProposalExecutedEvent,
 } from "./events";
 export * from "./types";

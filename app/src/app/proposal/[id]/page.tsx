@@ -139,6 +139,23 @@ export default function ProposalDetailPage({ params }: Props) {
         Proposed by <span className="font-mono">{proposal.proposer}</span>
       </p>
 
+      {/* Veto Window Status - shown when proposal is Queued */}
+      {proposal.state === ProposalState.Queued && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></div>
+            <div>
+              <p className="text-sm font-semibold text-blue-900">
+                Veto Window Open
+              </p>
+              <p className="text-xs text-blue-700 mt-1">
+                The guardian can cancel this proposal during the veto window before execution becomes possible.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delegation */}
       <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
         <div className="flex items-center justify-between gap-4">

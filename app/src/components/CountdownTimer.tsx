@@ -1,23 +1,24 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ledgerToEstimatedDate, formatCountdown, getProposalTimeInfo } from "../lib/utils/ledgerTime";
+import { ledgerToEstimatedDate, formatCountdown, getProposalTimeInfo, type ProposalTimeInfo } from "../lib/utils/ledgerTime";
 import { useLedgerClock } from "../lib/hooks/useLedgerClock";
 
 interface CountdownTimerProps {
   state: string;
   startLedger: number;
   endLedger: number;
+  vetoWindowCloseLedger?: number;
 }
 
-export function CountdownTimer({ state, startLedger, endLedger }: CountdownTimerProps) {
+export function CountdownTimer({ state, startLedger, endLedger, vetoWindowCloseLedger }: CountdownTimerProps) {
   const { currentLedger, isLoading } = useLedgerClock();
   const [displayText, setDisplayText] = useState<string>("");
   const [label, setLabel] = useState<string>("");
   const [targetLedger, setTargetLedger] = useState<number>(0);
 
   useEffect(() => {
-    const timeInfo = getProposalTimeInfo(state, startLedger, endLedger, currentLedger);
+    const timeInfo = getProposalTimeInfo(state, startLedger, endLedger, currentLedger, vetoWindowCloseLedger);
     if (!timeInfo) {
       setDisplayText("");
       setLabel("");
@@ -36,7 +37,7 @@ export function CountdownTimer({ state, startLedger, endLedger }: CountdownTimer
     const interval = setInterval(updateCountdown, 1000);
 
     return () => clearInterval(interval);
-  }, [state, startLedger, endLedger, currentLedger]);
+  }, [state, startLedger, endLedger, currentLedger, vetoWindowCloseLedger]);
 
   if (isLoading || !displayText) {
     return null;
