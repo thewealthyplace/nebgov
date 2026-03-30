@@ -91,6 +91,17 @@ export interface TreasuryTx {
   cancelled: boolean;
 }
 
+export interface ProposalAction {
+  target: string;
+  function: string;
+  args: any[];
+}
+
+export interface ProposalSimulationResult {
+  success: boolean;
+  computeUnits?: number;
+  stateChanges?: any[];
+  error?: string;
 export interface GovernorSettings {
   votingDelay: number;
   votingPeriod: number;
