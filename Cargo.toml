@@ -5,7 +5,9 @@ members = [
     "contracts/token-votes",
     "contracts/governor-factory",
     "contracts/treasury",
+    "contracts/token-votes-wrapper",
 ]
+    "fuzz",
 resolver = "2"
 
 [workspace.dependencies]

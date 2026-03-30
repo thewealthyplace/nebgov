@@ -155,9 +155,9 @@ describe("GovernorClient", () => {
       const id = await client.propose(
         mockKeypair,
         "Test proposal",
-        validCAddr,
-        "upgrade",
-        Buffer.from([1, 2, 3])
+        [validCAddr],
+        ["upgrade"],
+        [Buffer.from([1, 2, 3])]
       );
 
       expect(id).toBe(mockProposalId);
@@ -174,9 +174,9 @@ describe("GovernorClient", () => {
         client.propose(
           mockKeypair,
           "Test proposal",
-          validCAddr,
-          "upgrade",
-          Buffer.from([1, 2, 3])
+          [validCAddr],
+          ["upgrade"],
+          [Buffer.from([1, 2, 3])]
         )
       ).rejects.toThrow("Transaction failed");
     });
@@ -190,9 +190,9 @@ describe("GovernorClient", () => {
         client.propose(
           mockKeypair,
           "Test proposal",
-          validCAddr,
-          "upgrade",
-          Buffer.from([1, 2, 3])
+          [validCAddr],
+          ["upgrade"],
+          [Buffer.from([1, 2, 3])]
         )
       ).rejects.toThrow("Transaction failed");
     });
@@ -207,9 +207,9 @@ describe("GovernorClient", () => {
       const promise = client.propose(
         mockKeypair,
         "Test proposal",
-        validCAddr,
-        "upgrade",
-        Buffer.from([1, 2, 3])
+        [validCAddr],
+        ["upgrade"],
+        [Buffer.from([1, 2, 3])]
       ).catch(err => err);
 
       // Advance timers to trigger all retries
