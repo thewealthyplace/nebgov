@@ -364,6 +364,7 @@ impl TokenVotesContract {
             (previous_delegate, delegatee),
         );
     }
+}
 
 #[cfg(test)]
 mod tests {
