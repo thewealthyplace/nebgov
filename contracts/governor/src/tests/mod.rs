@@ -103,6 +103,9 @@ fn update_config_rejects_caller_that_is_not_the_contract_address() {
         guardian: Address::generate(&env),
         vote_type: VoteType::Extended,
         proposal_grace_period: 120_960,
+        use_dynamic_quorum: false,
+        reflector_oracle: None,
+        min_quorum_usd: 0,
     };
 
     env.mock_auths(&[MockAuth {
@@ -156,6 +159,9 @@ fn update_config_succeeds_with_contract_self_auth() {
         guardian: old_settings.guardian.clone(),
         vote_type: VoteType::Simple,
         proposal_grace_period: 604800,
+        use_dynamic_quorum: false,
+        reflector_oracle: None,
+        min_quorum_usd: 0,
     };
 
     client.update_config(&new_settings);

@@ -341,115 +341,6 @@ export class VotesClient {
       .slice(0, limit);
   }
 
-  // ─── Internal ──────────────────────────────────────────────────────────────
-
-  /**
-   * Scan all `del_chsh` (delegate changed) events from the token-votes
-   * contract and return a Map of delegator → current delegatee.
-   *
-   * The contract emits this event on every `delegate()` call:
-   *   topics: (symbol "del_chsh", delegator_address)
-   *   data:   (previous_delegatee | null, new_delegatee)
-   *
-   * We take the last event per delegator to get the current delegation state.
-   *
-   * @throws {VotesError} with code EventScanFailed on RPC failure.
-   */
-  private async buildDelegationMap(
-    fromLedger?: number
-  ): Promise<Map<string, string>> {
-    let startLedger = fromLedger;
-    if (startLedger === undefined) {
-      const info = await this.server.getLatestLedger();
-      startLedger = Math.max(1, info.sequence - DEFAULT_SCAN_WINDOW);
-    }
-
-    const contractId = this.contract.contractId();
-    const topicFilter = [xdr.ScVal.scvSymbol("del_chsh")];
-    const delegationMap = new Map<string, string>();
-
-    try {
-      let cursor = startLedger;
-      const latest = (await this.server.getLatestLedger()).sequence;
-
-      while (cursor <= latest) {
-        const response = await this.server.getEvents({
-          startLedger: cursor,
-          filters: [
-            {
-              type: "contract",
-              contractIds: [contractId],
-              topics: [topicFilter.map((v) => v.toXDR("base64"))],
-            },
-          ],
-          limit: 100,
-        });
-
-        const events = response.events ?? [];
-        let maxLedger = cursor;
-
-        for (const event of events) {
-          try {
-            // Topic layout: [symbol("del_chsh"), delegator_address]
-            const delegator = scValToNative(event.topic[1]) as string;
-            // Data layout: [previous_delegatee | null, new_delegatee]
-            const data = scValToNative(event.value) as [
-              string | null,
-              string
-            ];
-            const newDelegatee = data[1];
-            if (typeof delegator === "string" && typeof newDelegatee === "string") {
-              delegationMap.set(delegator, newDelegatee);
-            }
-          } catch {
-            // Malformed event — skip
-          }
-          if (event.ledger > maxLedger) maxLedger = event.ledger;
-        }
-
-        if (events.length === 0) break;
-        cursor = maxLedger + 1;
-      }
-    } catch (err) {
-      throw new VotesError(
-        VotesErrorCode.EventScanFailed,
-        `Failed to scan delegation events: ${err instanceof Error ? err.message : String(err)}`,
-        err
-      );
-    }
-
-    return delegationMap;
-  }
-}
-
-// ─── Pure helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Compute the Gini coefficient for an array of voting power values.
- *
- * Returns 0 when the array is empty or all values are equal (perfectly
- * uniform distribution), and approaches 1 when all power is concentrated
- * in a single account.
- */
-function computeGini(powers: bigint[]): number {
-  if (powers.length === 0) return 0;
-
-  const sorted = [...powers].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const n = sorted.length;
-  const total = sorted.reduce((s, v) => s + v, 0n);
-  if (total === 0n) return 0;
-
-  // Gini = (2 * Σ(i * x_i)) / (n * Σ(x_i)) - (n + 1) / n
-  let weightedSum = 0n;
-  for (let i = 0; i < n; i++) {
-    weightedSum += BigInt(i + 1) * sorted[i];
-  }
-
-  return (
-    (2 * Number(weightedSum)) / (n * Number(total)) - (n + 1) / n
-  );
-}
-
   /**
    * Delegate voting power by signature (gasless for the token holder).
    *
@@ -507,7 +398,6 @@ function computeGini(powers: bigint[]): number {
     nonce: bigint,
     expiry: bigint
   ): Buffer {
-    // Build message: (owner, delegatee, nonce, expiry)
     const message = Buffer.concat([
       Buffer.from(signer.publicKey()),
       Buffer.from(delegatee),
@@ -515,7 +405,106 @@ function computeGini(powers: bigint[]): number {
       Buffer.from(expiry.toString(16).padStart(16, "0"), "hex"),
     ]);
 
-    // Sign the message
-    const signature = signer.sign(message);
-    return signature;
+    return signer.sign(message);
   }
+
+  // ─── Internal ──────────────────────────────────────────────────────────────
+
+  /**
+   * Scan all `del_chsh` (delegate changed) events from the token-votes
+   * contract and return a Map of delegator → current delegatee.
+   *
+   * The contract emits this event on every `delegate()` call:
+   *   topics: (symbol "del_chsh", delegator_address)
+   *   data:   (previous_delegatee | null, new_delegatee)
+   *
+   * We take the last event per delegator to get the current delegation state.
+   *
+   * @throws {VotesError} with code EventScanFailed on RPC failure.
+   */
+  private async buildDelegationMap(
+    fromLedger?: number
+  ): Promise<Map<string, string>> {
+    let startLedger = fromLedger;
+    if (startLedger === undefined) {
+      const info = await this.server.getLatestLedger();
+      startLedger = Math.max(1, info.sequence - DEFAULT_SCAN_WINDOW);
+    }
+
+    const contractId = this.contract.contractId();
+    const topicFilter = [xdr.ScVal.scvSymbol("del_chsh")];
+    const delegationMap = new Map<string, string>();
+
+    try {
+      let cursor = startLedger;
+      const latest = (await this.server.getLatestLedger()).sequence;
+
+      while (cursor <= latest) {
+        const response = await this.server.getEvents({
+          startLedger: cursor,
+          filters: [
+            {
+              type: "contract",
+              contractIds: [contractId],
+              topics: [topicFilter.map((v) => v.toXDR("base64"))],
+            },
+          ],
+          limit: 100,
+        });
+
+        const events = response.events ?? [];
+        let maxLedger = cursor;
+
+        for (const event of events) {
+          try {
+            const delegator = scValToNative(event.topic[1]) as string;
+            const data = scValToNative(event.value) as [string | null, string];
+            const newDelegatee = data[1];
+            if (typeof delegator === "string" && typeof newDelegatee === "string") {
+              delegationMap.set(delegator, newDelegatee);
+            }
+          } catch {
+            // Malformed event — skip
+          }
+          if (event.ledger > maxLedger) maxLedger = event.ledger;
+        }
+
+        if (events.length === 0) break;
+        cursor = maxLedger + 1;
+      }
+    } catch (err) {
+      throw new VotesError(
+        VotesErrorCode.EventScanFailed,
+        `Failed to scan delegation events: ${err instanceof Error ? err.message : String(err)}`,
+        err
+      );
+    }
+
+    return delegationMap;
+  }
+}
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Compute the Gini coefficient for an array of voting power values.
+ *
+ * Returns 0 when the array is empty or all values are equal (perfectly
+ * uniform distribution), and approaches 1 when all power is concentrated
+ * in a single account.
+ */
+function computeGini(powers: bigint[]): number {
+  if (powers.length === 0) return 0;
+
+  const sorted = [...powers].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const n = sorted.length;
+  const total = sorted.reduce((s, v) => s + v, 0n);
+  if (total === 0n) return 0;
+
+  let weightedSum = 0n;
+  for (let i = 0; i < n; i++) {
+    weightedSum += BigInt(i + 1) * sorted[i];
+  }
+
+  return (2 * Number(weightedSum)) / (n * Number(total)) - (n + 1) / n;
+}

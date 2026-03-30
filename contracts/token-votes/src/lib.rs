@@ -3,6 +3,9 @@
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN, Env};
 use soroban_sdk::xdr::ToXdr;
 
+#[cfg(test)]
+mod load_tests;
+
 /// A voting power checkpoint at a specific ledger sequence.
 #[contracttype]
 #[derive(Clone)]
