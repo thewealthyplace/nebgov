@@ -39,12 +39,19 @@ export function formatCountdown(targetDate: Date): string {
   return `${seconds}s`;
 }
 
+export interface ProposalTimeInfo {
+  label: string;
+  countdown: string;
+  targetLedger: number;
+}
+
 export function getProposalTimeInfo(
   state: string,
   startLedger: number,
   endLedger: number,
-  currentLedger: number
-): { label: string; countdown: string; targetLedger: number } | null {
+  currentLedger: number,
+  vetoWindowCloseLedger?: number,
+): ProposalTimeInfo | null {
   if (currentLedger === 0) return null;
 
   if (state === "Pending" && currentLedger < startLedger) {
@@ -60,6 +67,14 @@ export function getProposalTimeInfo(
       label: "Voting ends in",
       countdown: formatCountdown(ledgerToEstimatedDate(endLedger, currentLedger)),
       targetLedger: endLedger,
+    };
+  }
+
+  if (state === "Queued" && vetoWindowCloseLedger && currentLedger < vetoWindowCloseLedger) {
+    return {
+      label: "Veto window closes in",
+      countdown: formatCountdown(ledgerToEstimatedDate(vetoWindowCloseLedger, currentLedger)),
+      targetLedger: vetoWindowCloseLedger,
     };
   }
 
