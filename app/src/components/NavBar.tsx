@@ -26,6 +26,7 @@ import { loadNotificationHistory } from "../lib/governance-notifications";
 
 const NAV_LINKS = [
   { name: "Proposals", href: "/", icon: LayoutDashboard },
+  { name: "Governors", href: "/governors", icon: LayoutDashboard },
   { name: "Notifications", href: "/notifications", icon: Bell },
   { name: "Delegates", href: "/delegates", icon: Users },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
