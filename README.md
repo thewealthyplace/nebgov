@@ -45,6 +45,8 @@ Get started by deploying your first NebGov DAO to the Stellar testnet in under 1
 
 For full setup instructions and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
+For a step-by-step local development guide, see [docs/local-development.md](./docs/local-development.md).
+
 ---
 
 ## Architecture
