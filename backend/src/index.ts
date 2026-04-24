@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import rateLimit from "express-rate-limit";
 import competitionsRouter from "./routes/competitions";
 import leaderboardRouter from "./routes/leaderboard";
 import authRouter from "./routes/auth";
@@ -11,18 +12,49 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Rate limiters
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later." },
+});
+
+const joinLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many join attempts" },
+});
+
+const leaderboardLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests" },
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Health check
-app.get("/health", (req, res) => {
+// Health check — exempt from rate limiting
+app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// Apply global limiter to all routes below
+app.use(globalLimiter);
 
 // Routes
 app.use("/auth", authRouter);
 app.use("/competitions", competitionsRouter);
+app.post("/competitions/:id/join", joinLimiter);
+app.post("/competitions/:id/leave", joinLimiter);
+app.use("/leaderboard/history", leaderboardLimiter);
 app.use("/leaderboard", leaderboardRouter);
 app.use("/notifications", notificationsRouter);
 
