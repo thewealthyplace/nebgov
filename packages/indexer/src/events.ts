@@ -1,5 +1,6 @@
 import { SorobanRpc, scValToNative } from "@stellar/stellar-sdk";
 import { pool } from "./db";
+import { invalidate, invalidatePattern } from "./cache";
 
 export interface IndexerConfig {
   rpcUrl: string;
@@ -95,12 +96,14 @@ async function handleProposalCreated(
     number
   ];
 
+  invalidatePattern("proposals:");
   await pool.query(
     `INSERT INTO proposals (id, proposer, description, start_ledger, end_ledger)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (id) DO NOTHING`,
     [String(id), proposer, description, startLedger, endLedger]
   );
+  invalidate(`profile:${proposer}`);
 }
 
 async function handleVoteCast(
@@ -132,16 +135,22 @@ async function handleVoteCast(
     `UPDATE proposals SET ${col} = ${col} + $1 WHERE id = $2`,
     [weight, proposalId]
   );
+  invalidate(`proposal_votes:${proposalId}`, `profile:${voter}`);
+  invalidatePattern("proposals:");
 }
 
 async function handleProposalQueued(topics: unknown[]): Promise<void> {
   const proposalId = String(topics[1] as bigint);
   await pool.query("UPDATE proposals SET queued = true WHERE id = $1", [proposalId]);
+  invalidate(`proposal_votes:${proposalId}`);
+  invalidatePattern("proposals:");
 }
 
 async function handleProposalExecuted(topics: unknown[]): Promise<void> {
   const proposalId = String(topics[1] as bigint);
   await pool.query("UPDATE proposals SET executed = true WHERE id = $1", [proposalId]);
+  invalidate(`proposal_votes:${proposalId}`);
+  invalidatePattern("proposals:");
 }
 
 async function handleDelegateChanged(
@@ -157,4 +166,6 @@ async function handleDelegateChanged(
      VALUES ($1, $2, $3, $4)`,
     [delegator, oldDelegatee, newDelegatee, event.ledger]
   );
+  invalidatePattern("delegates:");
+  invalidate(`profile:${delegator}`);
 }
