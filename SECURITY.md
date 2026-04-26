@@ -53,3 +53,16 @@ The frontend (`app/`) is lower priority but still in scope.
 | main branch | Yes |
 | Tagged releases | Yes |
 | Older commits | No |
+
+## Governance Threat Model
+
+The governance protocol has a formal threat model documenting known attack vectors:
+
+| Document | Description |
+|----------|-------------|
+| [docs/security/threat-model.md](./docs/security/threat-model.md) | Governance attack vectors, mitigations, and accepted risks |
+
+For details on specific security mechanisms, see:
+- [docs/security.md](./docs/security.md) - Treasury reentrancy protections
+- [docs/adr/adr-001-checkpoint-voting-power.md](./docs/adr/adr-001-checkpoint-voting-power.md) - Flash loan mitigation
+- [docs/adr/adr-006-self-governed-upgrades.md](./docs/adr/adr-006-self-governed-upgrades.md) - Upgrade governance
