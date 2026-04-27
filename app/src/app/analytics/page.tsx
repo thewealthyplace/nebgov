@@ -43,6 +43,15 @@ export default function AnalyticsPage() {
     mostActiveProposers: Array<{ proposer: string; count: number }>;
     outcomes: { executed: number; cancelled: number; queued: number };
   } | null>(null);
+  const [stats, setStats] = useState<{
+    total_proposals: number;
+    active_proposals: number;
+    total_votes_cast: number;
+    unique_voters: number;
+    total_delegates: number;
+    participation_rate: number;
+    last_updated: string;
+  } | null>(null);
   const [totalSupply, setTotalSupply] = useState<bigint>(0n);
 
   const chartTheme = {
@@ -81,18 +90,21 @@ export default function AnalyticsPage() {
           ...(rpcUrl && { rpcUrl }),
         });
 
-        const [summaryResp, delegatesResp, supply] = await Promise.all([
+        const [summaryResp, delegatesResp, statsResp, supply] = await Promise.all([
           fetch(`${indexerUrl}/analytics/summary`, { cache: "no-store" }),
           fetch(`${indexerUrl}/delegates?top=10`, { cache: "no-store" }),
+          fetch(`${indexerUrl}/stats`, { cache: "no-store" }),
           votesClient.getTotalSupply(),
         ]);
 
         if (!summaryResp.ok) throw new Error(`Indexer error: ${summaryResp.status}`);
         if (!delegatesResp.ok) throw new Error(`Indexer error: ${delegatesResp.status}`);
+        if (!statsResp.ok) throw new Error(`Indexer error: ${statsResp.status}`);
 
-        const [summaryJson, delegatesJson] = await Promise.all([
+        const [summaryJson, delegatesJson, statsJson] = await Promise.all([
           summaryResp.json(),
           delegatesResp.json(),
+          statsResp.json(),
         ]);
 
         // Fetch proposals (paginate all-time; stop early for 7d/30d)
@@ -136,6 +148,7 @@ export default function AnalyticsPage() {
         if (cancelled) return;
 
         setSummary(summaryJson);
+        setStats(statsJson);
         setTopDelegates(
           (delegatesJson.delegates ?? []).map((d: any) => ({
             name: String(d.address ?? "").slice(0, 8) + "…",
@@ -268,15 +281,15 @@ export default function AnalyticsPage() {
           {loading ? (
             <Skeleton className="h-7 w-16 mt-2" />
           ) : (
-            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{summary?.totalProposals ?? 0}</p>
+            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{stats?.total_proposals ?? summary?.totalProposals ?? 0}</p>
           )}
         </div>
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
-          <p className="text-sm text-gray-500 dark:text-gray-400">Avg participation</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Active proposals</p>
           {loading ? (
-            <Skeleton className="h-7 w-24 mt-2" />
+            <Skeleton className="h-7 w-16 mt-2" />
           ) : (
-            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{avgParticipationPct}%</p>
+            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{stats?.active_proposals ?? 0}</p>
           )}
         </div>
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
@@ -284,7 +297,34 @@ export default function AnalyticsPage() {
           {loading ? (
             <Skeleton className="h-7 w-20 mt-2" />
           ) : (
-            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{summary?.totalUniqueVoters ?? 0}</p>
+            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{stats?.unique_voters ?? summary?.totalUniqueVoters ?? 0}</p>
+          )}
+        </div>
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+          <p className="text-sm text-gray-500 dark:text-gray-400">Participation rate</p>
+          {loading ? (
+            <Skeleton className="h-7 w-16 mt-2" />
+          ) : (
+            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{((stats?.participation_rate ?? avgParticipationPct) * 100).toFixed(1)}%</p>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+          <p className="text-sm text-gray-500 dark:text-gray-400">Total votes cast</p>
+          {loading ? (
+            <Skeleton className="h-7 w-16 mt-2" />
+          ) : (
+            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{stats?.total_votes_cast ?? 0}</p>
+          )}
+        </div>
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+          <p className="text-sm text-gray-500 dark:text-gray-400">Total delegates</p>
+          {loading ? (
+            <Skeleton className="h-7 w-16 mt-2" />
+          ) : (
+            <p className="text-2xl font-semibold text-gray-900 dark:text-white">{stats?.total_delegates ?? 0}</p>
           )}
         </div>
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
@@ -298,6 +338,16 @@ export default function AnalyticsPage() {
                 {" "}
                 ({summary?.mostActiveProposers?.[0]?.count ?? 0})
               </span>
+            </p>
+          )}
+        </div>
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+          <p className="text-sm text-gray-500 dark:text-gray-400">Last updated</p>
+          {loading ? (
+            <Skeleton className="h-7 w-28 mt-2" />
+          ) : (
+            <p className="text-sm font-semibold text-gray-900 dark:text-white mt-2">
+              {stats?.last_updated ? new Date(stats.last_updated).toLocaleDateString() : "—"}
             </p>
           )}
         </div>

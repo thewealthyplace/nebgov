@@ -111,7 +111,81 @@ describe("API Endpoints", () => {
     });
   });
 
-  describe("GET /proposals with cursor pagination", () => {
+  describe("GET /stats", () => {
+    it("should return governance stats", async () => {
+      const mockStats = {
+        total_proposals: 47,
+        active_proposals: 3,
+        total_votes_cast: 1204,
+        unique_voters: 89,
+        total_delegates: 34,
+        participation_rate: 0.42,
+        last_updated: "2026-04-25T08:00:00Z",
+      };
+
+      const mockServer = {
+        getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1050 }),
+      } as any;
+
+      (mockPool.query as jest.Mock)
+        .mockResolvedValueOnce({ rows: [{ count: 47 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 3 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 1204 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 89 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 34 }] })
+        .mockResolvedValueOnce({ rows: [{ total: 5000, count: 10 }] });
+
+      const statsApp = createApp(mockServer);
+      const response = await request(statsApp).get("/stats");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        total_proposals: 47,
+        active_proposals: 3,
+        total_votes_cast: 1204,
+        unique_voters: 89,
+        total_delegates: 34,
+        participation_rate: 0.42,
+      });
+      expect(response.body.last_updated).toBeDefined();
+    });
+
+    it("should return participation_rate as 0 when no executed proposals", async () => {
+      const mockServer = {
+        getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1050 }),
+      } as any;
+
+      (mockPool.query as jest.Mock)
+        .mockResolvedValueOnce({ rows: [{ count: 5 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 1 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 10 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 5 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 2 }] })
+        .mockResolvedValueOnce({ rows: [{ total: 0, count: 0 }] });
+
+      const statsApp = createApp(mockServer);
+      const response = await request(statsApp).get("/stats");
+
+      expect(response.status).toBe(200);
+      expect(response.body.participation_rate).toBe(0);
+    });
+
+    it("should return 500 on database error", async () => {
+      const mockServer = {
+        getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1050 }),
+      } as any;
+
+      (mockPool.query as jest.Mock).mockRejectedValueOnce(new Error("Database error"));
+
+      const statsApp = createApp(mockServer);
+      const response = await request(statsApp).get("/stats");
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: "Internal server error" });
+    });
+  });
+
+describe("GET /proposals with cursor pagination", () => {
     const mockProposals = [
       { id: 47, description: "Proposal 47" },
       { id: 46, description: "Proposal 46" },
