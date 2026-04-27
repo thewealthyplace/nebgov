@@ -82,7 +82,7 @@ fn test_schedule_batch_returns_ids_and_emits_event() {
 
     let events = env.events().all();
     let has_batch_event = events.iter().any(|(_, topics, _)| {
-        topics.len() >= 1 && {
+        !topics.is_empty() && {
             let first: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
             first.is_ok() && first.unwrap() == symbol_short!("schbatch")
         }

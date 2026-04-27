@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 mod events;
 
@@ -48,6 +49,7 @@ pub enum GovernorError {
 /// trigger execution once the mandatory delay has elapsed.
 #[contractclient(name = "TimelockClient")]
 pub trait TimelockTrait {
+    #[allow(clippy::too_many_arguments)]
     fn schedule(
         env: Env,
         caller: Address,
@@ -333,6 +335,7 @@ impl GovernorContract {
     }
 
     /// Initialize the governor with configuration.
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -408,6 +411,7 @@ impl GovernorContract {
     ///
     /// Before creating the proposal, this function verifies that the proposer
     /// has sufficient voting power to meet the `proposal_threshold`.
+    #[allow(clippy::too_many_arguments)]
     pub fn propose(
         env: Env,
         proposer: Address,
@@ -598,7 +602,7 @@ impl GovernorContract {
                 }
                 // Simple integer square root implementation
                 let mut x = raw_u128;
-                let mut y = (x + 1) / 2;
+                let mut y = x.div_ceil(2);
                 while y < x {
                     x = y;
                     y = (x + raw_u128 / x) / 2;
@@ -1051,7 +1055,7 @@ impl GovernorContract {
         let proposal = Self::must_get_proposal(&env, proposal_id);
 
         // Verify the proposal is queued
-        if !(proposal.queued && !proposal.cancelled) {
+        if !proposal.queued || proposal.cancelled {
             env.panic_with_error(GovernorError::ProposalNotQueued);
         }
 
@@ -1961,7 +1965,7 @@ mod test {
         let events = env.events().all();
 
         let has_vote_rsn = events.iter().any(|(_, topics, _)| {
-            topics.len() >= 1 && {
+            !topics.is_empty() && {
                 let first: Result<soroban_sdk::Symbol, _> =
                     topics.get(0).unwrap().try_into_val(&env);
                 first.is_ok() && first.unwrap() == Symbol::new(&env, "VoteCastWithReason")

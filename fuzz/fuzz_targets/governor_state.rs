@@ -68,7 +68,7 @@ fuzz_target!(|input: FuzzInput| {
 
     // Create proposals
     let mut proposal_ids = SorobanVec::new(&env);
-    for i in 0..input.num_proposals.min(10) {
+    for _i in 0..input.num_proposals.min(10) {
         let proposer = Address::generate(&env);
         let description = String::from_str(&env, "Test proposal");
         let description_hash = env
