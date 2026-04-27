@@ -136,13 +136,14 @@ impl ConfigurableVotesContract {
 use sorogov_timelock::{TimelockContract, TimelockContractClient};
 use sorogov_token_votes::{TokenVotesContract, TokenVotesContractClient};
 
+#[allow(dead_code)]
 fn count_topic(env: &Env, topic_name: &str) -> usize {
     let topic_symbol = Symbol::new(env, topic_name);
     env.events()
         .all()
         .iter()
         .filter(|(_, topics, _)| {
-            topics.len() > 0 && {
+            !topics.is_empty() && {
                 let first: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
                 first.is_ok() && first.unwrap() == topic_symbol
             }
@@ -545,7 +546,7 @@ fn test_cancel_queued_during_veto_window() {
     );
 
     let ts_before_queue = env.ledger().timestamp();
-    let queue_ledger_before = env.ledger().sequence();
+    let _queue_ledger_before = env.ledger().sequence();
 
     governor_client.queue(&proposal_id);
     assert_eq!(governor_client.state(&proposal_id), ProposalState::Queued);
@@ -680,7 +681,7 @@ fn test_cancel_queued_after_window_closes() {
     // Advance ledger far past the veto window (min_delay is 100 seconds, roughly 10-20 ledgers)
     // Use a very large advance to ensure we're well past the veto window
     env.ledger()
-        .with_mut(|l| l.sequence_number = l.sequence_number + 1000);
+        .with_mut(|l| l.sequence_number += 1000);
 
     // Try to cancel after veto window closes — should fail
     governor_client.cancel_queued(&guardian, &proposal_id);
@@ -1014,11 +1015,11 @@ fn test_multi_token_full_lifecycle_with_three_tokens_and_quorum_gate() {
 /// Helper: deploy a governor backed by a ConfigurableVotesContract with a
 /// known total supply, quorum numerator, and zero proposal threshold so any
 /// address can propose.
-fn setup_dynamic_quorum_governor(
-    env: &Env,
+fn setup_dynamic_quorum_governor<'a>(
+    env: &'a Env,
     total_supply: i128,
     quorum_numerator: u32,
-) -> (GovernorContractClient, ConfigurableVotesContractClient, Address, Address) {
+) -> (GovernorContractClient<'a>, ConfigurableVotesContractClient<'a>, Address, Address) {
     let admin = Address::generate(env);
     let guardian = Address::generate(env);
 

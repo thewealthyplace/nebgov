@@ -14,13 +14,14 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, Symbol, TryIntoVal,
 };
 
+#[allow(dead_code)]
 fn count_topic(env: &Env, topic_name: &str) -> usize {
     let topic_symbol = Symbol::new(env, topic_name);
     env.events()
         .all()
         .iter()
         .filter(|(_, topics, _)| {
-            topics.len() > 0 && {
+            !topics.is_empty() && {
                 let first: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
                 first.is_ok() && first.unwrap() == topic_symbol
             }
@@ -28,6 +29,7 @@ fn count_topic(env: &Env, topic_name: &str) -> usize {
         .count()
 }
 
+#[allow(dead_code)]
 fn settings_with_defaults(_env: &Env, guardian: Address) -> GovernorSettings {
     GovernorSettings {
         voting_delay: 200,
