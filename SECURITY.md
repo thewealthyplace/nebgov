@@ -65,6 +65,15 @@ All JavaScript dependencies are automatically scanned for known vulnerabilities 
 - `packages/indexer/` - Event indexer API
 - `backend/` - Backend services (if present)
 
+### Rust Security Audits
+
+All Rust dependencies are automatically scanned for known security vulnerabilities using `cargo-audit` via the `rustsec/audit-check` action.
+
+- **Frequency**: Every PR and push to `main`.
+- **Database**: [RustSec Advisory Database](https://rustsec.org/advisories/).
+- **Reporting**: Vulnerabilities are posted as comments on pull requests.
+- **Configuration**: Suppression of false positives or non-applicable advisories is handled in `.cargo/audit.toml`.
+
 ### Handling False Positives
 
 If a vulnerability is flagged that doesn't apply to our usage or is a false positive, you can suppress it using one of these methods:

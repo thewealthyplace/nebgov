@@ -204,3 +204,11 @@ jobs:
         with:
           working_directory: .
           fail_on_error: false
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
