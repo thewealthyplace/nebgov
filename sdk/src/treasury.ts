@@ -14,6 +14,7 @@ import {
   BatchTransferRecipient,
   BatchTransferEvent,
   Network,
+  SpendingCap,
 } from "./types";
 import { TreasuryError, TreasuryErrorCode, parseTreasuryError } from "./errors";
 import { withRetry, isNetworkError } from "./utils";
@@ -77,6 +78,17 @@ export class TreasuryClient {
     this.server = new SorobanRpc.Server(rpcUrl, { allowHttp: false });
     this.contract = new Contract(config.treasuryAddress);
     this.networkPassphrase = NETWORK_PASSPHRASES[config.network];
+  }
+
+  private readAccount(fallback?: string): string {
+    const account = this.config.simulationAccount ?? fallback;
+    if (!account) {
+      throw new TreasuryError(
+        TreasuryErrorCode.InvalidArguments,
+        "TreasuryClient read methods require simulationAccount in TreasuryConfig",
+      );
+    }
+    return account;
   }
 
   private async retry<T>(
@@ -181,6 +193,106 @@ export class TreasuryClient {
       const bytes = scValToNative(returnVal) as Uint8Array;
       return Buffer.from(bytes).toString("hex");
     }, (e) => this.isRetryableSubmissionError(e));
+  }
+
+  /**
+   * Configure a per-token spending cap for batch transfers.
+   */
+  async setSpendingCap(
+    signer: Keypair,
+    token: string,
+    maxAmount: bigint,
+    periodLedgers: number,
+  ): Promise<void> {
+    return this.retry(async () => {
+      const account = await this.server.getAccount(signer.publicKey());
+
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          this.contract.call(
+            "set_spending_cap",
+            nativeToScVal(signer.publicKey(), { type: "address" }),
+            nativeToScVal(token, { type: "address" }),
+            nativeToScVal(maxAmount, { type: "i128" }),
+            nativeToScVal(periodLedgers, { type: "u32" }),
+          ),
+        )
+        .setTimeout(30)
+        .build();
+
+      const prepared = await this.server.prepareTransaction(tx);
+      prepared.sign(signer);
+      const result = await this.server.sendTransaction(prepared);
+      if (result.status === "ERROR") {
+        throw parseTreasuryError(result);
+      }
+    }, (e) => this.isRetryableSubmissionError(e));
+  }
+
+  /**
+   * Fetch the configured spending cap for a token, if any.
+   */
+  async getSpendingCap(token: string): Promise<SpendingCap | null> {
+    return this.retry(async () => {
+      const result = await this.server.simulateTransaction(
+        new TransactionBuilder(
+          await this.server.getAccount(this.readAccount()),
+          { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
+        )
+          .addOperation(
+            this.contract.call(
+              "get_spending_cap",
+              nativeToScVal(token, { type: "address" }),
+            ),
+          )
+          .setTimeout(30)
+          .build(),
+      );
+
+      if (SorobanRpc.Api.isSimulationError(result)) return null;
+      const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+        .result?.retval;
+      if (!raw) return null;
+      const cap = scValToNative(raw) as
+        | { token: string; max_amount: bigint | number | string; period_ledgers: bigint | number | string }
+        | null;
+      if (!cap) return null;
+      return {
+        token: cap.token,
+        maxAmount: BigInt(cap.max_amount),
+        periodLedgers: Number(cap.period_ledgers),
+      };
+    });
+  }
+
+  /**
+   * Get the amount spent during the current spending period for a token.
+   */
+  async getSpentThisPeriod(token: string): Promise<bigint> {
+    return this.retry(async () => {
+      const result = await this.server.simulateTransaction(
+        new TransactionBuilder(
+          await this.server.getAccount(this.readAccount()),
+          { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
+        )
+          .addOperation(
+            this.contract.call(
+              "get_spent_this_period",
+              nativeToScVal(token, { type: "address" }),
+            ),
+          )
+          .setTimeout(30)
+          .build(),
+      );
+
+      if (SorobanRpc.Api.isSimulationError(result)) return 0n;
+      const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+        .result?.retval;
+      return raw ? BigInt(scValToNative(raw)) : 0n;
+    });
   }
 
   /**

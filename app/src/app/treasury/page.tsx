@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useWallet } from "../../lib/wallet-context";
-import { TreasuryClient, type TreasuryTx } from "../../lib/treasury-client";
+import { TreasuryClient, type TreasurySpendingCap, type TreasuryTx } from "../../lib/treasury-client";
 import {
   type CalldataArgKind,
   type CalldataArgRow,
@@ -69,6 +69,8 @@ export default function TreasuryPage() {
     {},
   );
   const [ownerOnChain, setOwnerOnChain] = useState<boolean | null>(null);
+  const [spendingCap, setSpendingCap] = useState<TreasurySpendingCap | null>(null);
+  const [spentThisPeriod, setSpentThisPeriod] = useState<bigint>(0n);
   const [loading, setLoading] = useState(true);
   const [approving, setApproving] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -88,6 +90,7 @@ export default function TreasuryPage() {
   const treasuryContractAddress = process.env.NEXT_PUBLIC_TREASURY_ADDRESS || "";
   const treasuryAccountId = process.env.NEXT_PUBLIC_TREASURY_ACCOUNT || "";
   const usdcIssuer = process.env.NEXT_PUBLIC_USDC_ISSUER || "";
+  const treasuryTokenAddress = process.env.NEXT_PUBLIC_TREASURY_TOKEN_ADDRESS || usdcIssuer;
   const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || undefined;
 
   const treasuryClient = useMemo(() => {
@@ -188,8 +191,21 @@ export default function TreasuryPage() {
       } else {
         setOwnerOnChain(null);
       }
+
+      if (treasuryTokenAddress) {
+        const cap = await treasuryClient.getSpendingCap(viewer, treasuryTokenAddress);
+        setSpendingCap(cap);
+        if (cap) {
+          setSpentThisPeriod(await treasuryClient.getSpentThisPeriod(viewer, treasuryTokenAddress));
+        } else {
+          setSpentThisPeriod(0n);
+        }
+      } else {
+        setSpendingCap(null);
+        setSpentThisPeriod(0n);
+      }
     },
-    [treasuryClient, publicKey],
+    [publicKey, treasuryClient, treasuryTokenAddress],
   );
 
   const refreshAll = useCallback(async () => {
@@ -346,6 +362,47 @@ export default function TreasuryPage() {
             {loading ? "Loading…" : `${xlmBalance} XLM`}
           </p>
         </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-6 mb-8">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Spending cap</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Current per-period treasury cap and utilization for the configured token.
+        </p>
+
+        {treasuryTokenAddress ? (
+          spendingCap ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">Token</p>
+                <p className="mt-1 font-mono text-sm text-gray-800 break-all">
+                  {spendingCap.token}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">Cap</p>
+                <p className="mt-1 text-sm text-gray-800">
+                  {spendingCap.maxAmount.toString()} units / {spendingCap.periodLedgers} ledgers
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">Used</p>
+                <p className="mt-1 text-sm text-gray-800">
+                  {spentThisPeriod.toString()} units
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">
+              No spending cap is configured for <span className="font-mono">{treasuryTokenAddress}</span>.
+            </p>
+          )
+        ) : (
+          <p className="text-sm text-gray-500">
+            Set <span className="font-mono">NEXT_PUBLIC_TREASURY_TOKEN_ADDRESS</span> or
+            <span className="font-mono"> NEXT_PUBLIC_USDC_ISSUER</span> to show utilization.
+          </p>
+        )}
       </div>
 
       {/* Submit */}

@@ -70,6 +70,25 @@ impl TokenVotesContract {
         Self::apply_delegation(&env, delegator, delegatee);
     }
 
+    /// Explicitly revoke delegation and move voting power back to self.
+    ///
+    /// If the account is already self-delegated or has never delegated, this
+    /// is a no-op.
+    pub fn undelegate(env: Env, delegator: Address) {
+        delegator.require_auth();
+
+        let current_delegate: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Delegate(delegator.clone()));
+
+        if let Some(delegatee) = current_delegate {
+            if delegatee != delegator {
+                Self::apply_delegation(&env, delegator.clone(), delegator);
+            }
+        }
+    }
+
     /// Transfer underlying votes token and delegate in one atomic transaction.
     /// Only `from` must authorize this operation.
     pub fn transfer_and_delegate(

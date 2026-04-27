@@ -83,9 +83,9 @@ export class VotesClient {
   }
 
   /**
-   * Revoke delegation and remove voting power from the previous delegatee.
+   * Explicitly revoke delegation and move voting power back to self.
    */
-  async revokeDelegation(signer: Keypair): Promise<void> {
+  async undelegate(signer: Keypair): Promise<void> {
     return this.retry(async () => {
       const account = await this.server.getAccount(signer.publicKey());
 
@@ -95,7 +95,7 @@ export class VotesClient {
       })
         .addOperation(
           this.contract.call(
-            "revoke_delegation",
+            "undelegate",
             nativeToScVal(signer.publicKey(), { type: "address" }),
           ),
         )
@@ -109,6 +109,13 @@ export class VotesClient {
         throw parseVotesError(result);
       }
     }, (e) => this.isRetryableSubmissionError(e));
+  }
+
+  /**
+   * Backwards-compatible alias for {@link undelegate}.
+   */
+  async revokeDelegation(signer: Keypair): Promise<void> {
+    return this.undelegate(signer);
   }
 
   /**

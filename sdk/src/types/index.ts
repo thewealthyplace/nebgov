@@ -191,6 +191,14 @@ export interface DelegatorRecord {
   startLedger: number;
 }
 
+export interface VoteGasEstimate {
+  ok: boolean;
+  cpuInsns?: string;
+  memBytes?: string;
+  estimatedFeeStroops?: string;
+  error?: string;
+}
+
 // ─── Votes Analytics Types ────────────────────────────────────────────────────
 
 /** A delegate's summary as returned by {@link VotesClient.getTopDelegates}. */
@@ -241,6 +249,8 @@ export interface TreasuryConfig {
   network: Network;
   /** RPC URL override (optional — defaults to public horizon) */
   rpcUrl?: string;
+  /** Optional funded classic account used for read-only simulation calls. */
+  simulationAccount?: string;
   /** Indexer base URL for off-chain queries (e.g. getBatchTransferHistory) */
   indexerUrl?: string;
   /** Maximum retry attempts for failed operations (default: 3) */
@@ -255,6 +265,12 @@ export interface BatchTransferRecipient {
   address: string;
   /** Amount of tokens to transfer (in the token's base unit) */
   amount: bigint;
+}
+
+export interface SpendingCap {
+  token: string;
+  maxAmount: bigint;
+  periodLedgers: number;
 }
 
 /** A treasury batch transfer event as returned by the indexer. */

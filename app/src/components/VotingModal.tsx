@@ -1,22 +1,25 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Keypair } from "@stellar/stellar-sdk";
 import toast from "react-hot-toast";
-import { GovernorClient, VoteSupport, VotesClient, VoteType, computeQuadraticWeight, type Network } from "@nebgov/sdk";
+import { GovernorClient, VoteSupport, VoteType, computeQuadraticWeight, type Network } from "@nebgov/sdk";
 import { useWallet } from "../lib/wallet-context";
 
 interface Props {
-  open: boolean;
+  open?: boolean;
+  isOpen?: boolean;
   onClose: () => void;
-  proposalId: bigint;
-  preselectedSupport: VoteSupport | null;
+  proposalId: bigint | string;
+  preselectedSupport?: VoteSupport | null;
   delegatee?: string | null;
-  votingPower: bigint;
+  votingPower?: bigint;
   onOpenDelegate?: () => void;
-  onVoted: () => void;
+  onVoted?: () => void;
+  onSuccess?: () => void;
   voteType?: VoteType;
   governorClient?: GovernorClient | null;
+  proposalTitle?: string;
 }
 
 function getGovernorClientFromEnv(): GovernorClient {
@@ -53,6 +56,7 @@ function getVoteSigner(): Keypair {
 
 export function VotingModal({
   open,
+  isOpen,
   onClose,
   proposalId,
   preselectedSupport,
@@ -60,35 +64,93 @@ export function VotingModal({
   votingPower,
   onOpenDelegate,
   onVoted,
+  onSuccess,
   voteType,
+  governorClient,
 }: Props) {
   const { isConnected, connect, publicKey } = useWallet();
+  const resolvedOpen = open ?? isOpen ?? false;
+  const resolvedProposalId = typeof proposalId === "bigint" ? proposalId : BigInt(proposalId);
+  const resolvedDelegatee = delegatee ?? publicKey ?? null;
+  const resolvedVotingPower = votingPower ?? 0n;
   const [support, setSupport] = useState<VoteSupport | null>(preselectedSupport ?? null);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [estimatingFee, setEstimatingFee] = useState(false);
+  const [estimatedFeeStroops, setEstimatedFeeStroops] = useState<bigint | null>(null);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
 
   useEffect(() => setSupport(preselectedSupport ?? null), [preselectedSupport]);
 
+  useEffect(() => {
+    if (!resolvedOpen || support === null || !resolvedDelegatee) {
+      setEstimatingFee(false);
+      setEstimatedFeeStroops(null);
+      setEstimateError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadEstimate() {
+      setEstimatingFee(true);
+      try {
+        const client = governorClient ?? getGovernorClientFromEnv();
+        const signer = getVoteSigner();
+        const result = await client.estimateVoteGas(
+          signer.publicKey(),
+          resolvedProposalId,
+          support,
+        );
+
+        if (cancelled) return;
+        if (result.ok) {
+          setEstimatedFeeStroops(
+            result.estimatedFeeStroops ? BigInt(result.estimatedFeeStroops) : null,
+          );
+          setEstimateError(null);
+        } else {
+          setEstimatedFeeStroops(null);
+          setEstimateError(result.error ?? "Unable to estimate fee");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setEstimatedFeeStroops(null);
+        setEstimateError(err instanceof Error ? err.message : "Unable to estimate fee");
+      } finally {
+        if (!cancelled) {
+          setEstimatingFee(false);
+        }
+      }
+    }
+
+    void loadEstimate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [governorClient, resolvedDelegatee, resolvedOpen, resolvedProposalId, support]);
+
   // Focus management for modal
   useEffect(() => {
-    if (open) {
+    if (resolvedOpen) {
       // Focus the modal when it opens
       const modal = document.getElementById('voting-modal');
       if (modal) {
         modal.focus();
       }
     }
-  }, [open]);
+  }, [resolvedOpen]);
 
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) {
+      if (e.key === 'Escape' && resolvedOpen) {
         onClose();
       }
     };
     
-    if (open) {
+    if (resolvedOpen) {
       document.addEventListener('keydown', handleEscape);
       // Prevent body scroll when modal is open
       document.body.style.overflow = 'hidden';
@@ -98,13 +160,13 @@ export function VotingModal({
       document.removeEventListener('keydown', handleEscape);
       document.body.style.overflow = 'unset';
     };
-  }, [open, onClose]);
+  }, [resolvedOpen, onClose]);
 
-  if (!open) return null;
+  if (!resolvedOpen) return null;
 
-  const tokenAmount = Number(votingPower) / 1e6;
+  const tokenAmount = Number(resolvedVotingPower) / 1e6;
   const isQuadratic = voteType === VoteType.Quadratic;
-  const quadraticWeight = isQuadratic ? computeQuadraticWeight(votingPower) : null;
+  const quadraticWeight = isQuadratic ? computeQuadraticWeight(resolvedVotingPower) : null;
 
   const totalSupplyRaw = process.env.NEXT_PUBLIC_TOTAL_SUPPLY; // optional, in tokens (raw units)
   const percentOfSupply = (() => {
@@ -112,11 +174,13 @@ export function VotingModal({
       if (!totalSupplyRaw) return null;
       const total = BigInt(totalSupplyRaw);
       if (total === 0n) return null;
-      return Number((votingPower * 10000n) / total) / 100; // two decimals
+      return Number((resolvedVotingPower * 10000n) / total) / 100; // two decimals
     } catch {
       return null;
     }
   })();
+  const estimatedFeeXlm =
+    estimatedFeeStroops !== null ? Number(estimatedFeeStroops) / 1e7 : null;
 
   async function handleConfirm() {
     if (support === null) {
@@ -133,7 +197,7 @@ export function VotingModal({
       }
     }
 
-    if (!delegatee) {
+    if (!resolvedDelegatee) {
       toast.error("Delegate first before casting a vote.");
       return;
     }
@@ -142,9 +206,10 @@ export function VotingModal({
     try {
       const client = getGovernorClientFromEnv();
       const signer = getVoteSigner();
-      await client.castVote(signer, proposalId, support);
+      await client.castVote(signer, resolvedProposalId, support);
       toast.success("Vote submitted successfully");
-      onVoted();
+      onVoted?.();
+      onSuccess?.();
       onClose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -184,8 +249,8 @@ export function VotingModal({
         {/* Delegation check */}
         <div className="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-lg p-3 mb-4">
           <p className="text-sm text-gray-600 dark:text-gray-300">Delegation</p>
-          {delegatee ? (
-            <p className="text-sm text-gray-700 dark:text-gray-200 mt-1">Delegated to <span className="font-mono">{delegatee}</span></p>
+          {resolvedDelegatee ? (
+            <p className="text-sm text-gray-700 dark:text-gray-200 mt-1">Delegated to <span className="font-mono">{resolvedDelegatee}</span></p>
           ) : (
             <div className="mt-2 flex items-center gap-3">
               <p className="text-sm text-red-600">You have not delegated voting power yet.</p>
@@ -238,6 +303,19 @@ export function VotingModal({
           )}
         </div>
 
+        <div className="mb-4 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Estimated fee
+          </p>
+          <p className="mt-1 text-sm text-gray-800">
+            {estimatingFee
+              ? "Estimating..."
+              : estimatedFeeXlm !== null
+                ? `~${estimatedFeeXlm.toFixed(6)} XLM`
+                : estimateError ?? "Unavailable"}
+          </p>
+        </div>
+
         {/* Vote options */}
         <fieldset className="mb-4">
           <legend className="sr-only">Vote options</legend>
@@ -282,9 +360,9 @@ export function VotingModal({
         <div className="flex items-center gap-3">
           <button
             onClick={handleConfirm}
-            disabled={submitting || !isConnected || !delegatee}
-            className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-            aria-describedby={!delegatee ? "delegation-required" : undefined}
+              disabled={submitting || !isConnected || !resolvedDelegatee}
+              className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            aria-describedby={!resolvedDelegatee ? "delegation-required" : undefined}
           >
             {submitting ? "Submitting vote..." : "Confirm & Sign"}
           </button>
@@ -296,7 +374,7 @@ export function VotingModal({
           </button>
         </div>
         
-        {!delegatee && (
+        {!resolvedDelegatee && (
           <div id="delegation-required" className="sr-only">
             You must delegate your voting power before you can vote.
           </div>
