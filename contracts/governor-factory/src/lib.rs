@@ -1,4 +1,6 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
+#![allow(deprecated)]
 
 use soroban_sdk::{
     contract, contractclient, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
@@ -97,6 +99,7 @@ impl GovernorFactoryContract {
     }
 
     /// Deploy a new governor + timelock pair and register it.
+    #[allow(clippy::too_many_arguments)]
     pub fn deploy(
         env: Env,
         deployer: Address,
@@ -120,16 +123,19 @@ impl GovernorFactoryContract {
         let id = count + 1;
 
         // Retrieve WASM hashes from storage
+        #[allow(unused_variables)]
         let governor_wasm: BytesN<32> = env
             .storage()
             .instance()
             .get(&DataKey::GovernorWasm)
             .expect("governor wasm not set");
+        #[allow(unused_variables)]
         let timelock_wasm: BytesN<32> = env
             .storage()
             .instance()
             .get(&DataKey::TimelockWasm)
             .expect("timelock wasm not set");
+        #[allow(unused_variables)]
         let token_votes_wasm: BytesN<32> = env
             .storage()
             .instance()

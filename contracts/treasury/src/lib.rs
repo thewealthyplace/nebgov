@@ -1,7 +1,6 @@
 #![no_std]
 
-use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::xdr::FromXdr;
+use soroban_sdk::xdr::{FromXdr, ToXdr};
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, token,
     Address, Bytes, Env, Symbol, Val, Vec,
@@ -103,7 +102,7 @@ impl TreasuryContract {
     pub fn initialize(env: Env, owners: Vec<Address>, threshold: u32, governor: Address) {
         assert!(!owners.is_empty(), "no owners");
         assert!(
-            threshold > 0 && threshold <= owners.len() as u32,
+            threshold > 0 && threshold <= owners.len(),
             "bad threshold"
         );
         env.storage().instance().set(&DataKey::Owners, &owners);

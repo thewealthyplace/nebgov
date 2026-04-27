@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sdk::xdr::{FromXdr, ToXdr};
 use soroban_sdk::{
@@ -99,6 +100,7 @@ impl TimelockContract {
     }
 
     /// Schedule multiple operations in a single call.
+    #[allow(clippy::too_many_arguments)]
     pub fn schedule_batch(
         env: Env,
         caller: Address,

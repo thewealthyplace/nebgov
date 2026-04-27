@@ -6,7 +6,7 @@
 extern crate std;
 
 #[cfg(test)]
-mod invariant_tests {
+mod tests {
     use crate::{Checkpoint, DataKey, TokenVotesContract, TokenVotesContractClient};
     use proptest::prelude::*;
     use soroban_sdk::{

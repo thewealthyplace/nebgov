@@ -138,7 +138,7 @@ impl TokenVotesContract {
             // Balance increased: average in the new tokens at current ledger
             let added = balance - record.balance;
             let total_weighted_start =
-                (record.balance as i128 * record.start_ledger as i128) + (added as i128 * current_ledger as i128);
+                (record.balance * record.start_ledger as i128) + (added * current_ledger as i128);
             new_record.start_ledger = if balance > 0 {
                 (total_weighted_start / balance) as u32
             } else {
@@ -149,8 +149,8 @@ impl TokenVotesContract {
         }
         // If balance decreased or stayed same, record.start_ledger is preserved.
 
-        let old_weighted_sum = record.balance as i128 * record.start_ledger as i128;
-        let new_weighted_sum = new_record.balance as i128 * new_record.start_ledger as i128;
+        let old_weighted_sum = record.balance * record.start_ledger as i128;
+        let new_weighted_sum = new_record.balance * new_record.start_ledger as i128;
 
         if let Some(old_delegatee) = previous_delegate.clone() {
             if old_delegatee != delegatee {
@@ -204,7 +204,7 @@ impl TokenVotesContract {
                 .get(&DataKey::DelegatorRecord(delegator.clone()))
                 .unwrap_or_default();
 
-            let weighted_sum = record.balance as i128 * record.start_ledger as i128;
+            let weighted_sum = record.balance * record.start_ledger as i128;
             if record.balance > 0 {
                 // Remove voting power from the previous delegate and total supply.
                 Self::update_account_votes(&env, old_delegatee.clone(), -record.balance, -weighted_sum);
@@ -619,11 +619,7 @@ impl TokenVotesContract {
 
         let retention_period = Self::checkpoint_retention_period(env.clone());
         let current_ledger = env.ledger().sequence();
-        let cutoff_ledger = if current_ledger > retention_period {
-            current_ledger - retention_period
-        } else {
-            0
-        };
+        let cutoff_ledger = current_ledger.saturating_sub(retention_period);
 
         // Ensure we don't prune checkpoints needed by active proposals
         let safe_cutoff = if let Some(min_ledger) = min_active_proposal_ledger {
@@ -725,7 +721,7 @@ impl TokenVotesContract {
             new_checkpoints.push_back(checkpoints.get(i).unwrap());
         }
 
-        let pruned_count = (start_idx as u32).min((checkpoints.len() as u32) - 1);
+        let pruned_count = start_idx.min(checkpoints.len() - 1);
 
         env.storage()
             .persistent()
