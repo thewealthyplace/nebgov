@@ -4,8 +4,8 @@ import {
   TransactionBuilder,
   Networks,
   BASE_FEE,
+  Keypair,
   nativeToScVal,
-  scValToNative,
 } from "@stellar/stellar-sdk";
 import { Network } from "./types";
 
@@ -21,45 +21,130 @@ const NETWORK_PASSPHRASES: Record<Network, string> = {
   futurenet: Networks.FUTURENET,
 };
 
+export interface WrapperConfig {
+  wrapperAddress: string;
+  network: Network;
+  rpcUrl?: string;
+}
+
 /**
- * WrapperClient — interact with the token-votes-wrapper contract.
- * Provides withdrawal locking and enhanced voting features.
+ * WrapperClient — interact with a deployed token-votes-wrapper contract.
+ *
+ * The wrapper allows any SEP-41 token to be used for governance by providing
+ * a 1:1 deposit/withdraw mechanism with checkpoint-based voting power.
  */
 export class WrapperClient {
+  private readonly config: WrapperConfig;
   private readonly server: SorobanRpc.Server;
   private readonly contract: Contract;
   private readonly networkPassphrase: string;
 
-  constructor(wrapperAddress: string, network: Network, rpcUrl?: string) {
-    const url = rpcUrl ?? RPC_URLS[network];
-    this.server = new SorobanRpc.Server(url, { allowHttp: false });
-    this.contract = new Contract(wrapperAddress);
-    this.networkPassphrase = NETWORK_PASSPHRASES[network];
+  constructor(config: WrapperConfig) {
+    this.config = config;
+    const rpcUrl = config.rpcUrl ?? RPC_URLS[config.network];
+    this.server = new SorobanRpc.Server(rpcUrl, { allowHttp: false });
+    this.contract = new Contract(config.wrapperAddress);
+    this.networkPassphrase = NETWORK_PASSPHRASES[config.network];
   }
 
   /**
-   * Get the locked until timestamp for a user's withdrawal.
-   * Returns 0 if not locked.
+   * Deposit underlying SEP-41 tokens and receive 1:1 wrapped voting tokens.
    */
-  async getLockedUntil(account: string): Promise<bigint> {
-    const result = await this.server.simulateTransaction(
-      new TransactionBuilder(
-        await this.server.getAccount(account),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
-      )
-        .addOperation(
-          this.contract.call(
-            "get_locked_until",
-            nativeToScVal(account, { type: "address" })
-          )
+  async deposit(signer: Keypair, amount: bigint): Promise<string> {
+    const account = await this.server.getAccount(signer.publicKey());
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call(
+          "deposit",
+          nativeToScVal(signer.publicKey(), { type: "address" }),
+          nativeToScVal(amount, { type: "i128" })
         )
-        .setTimeout(30)
-        .build()
-    );
+      )
+      .setTimeout(30)
+      .build();
 
-    if (SorobanRpc.Api.isSimulationError(result)) return 0n;
-    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
-      .result?.retval;
-    return raw ? BigInt(scValToNative(raw)) : 0n;
+    const prepared = await this.server.prepareTransaction(tx);
+    prepared.sign(signer);
+    const result = await this.server.sendTransaction(prepared);
+    return result.hash;
+  }
+
+  /**
+   * Burn wrapped voting tokens and reclaim the underlying SEP-41 tokens.
+   */
+  async withdraw(signer: Keypair, amount: bigint): Promise<string> {
+    const account = await this.server.getAccount(signer.publicKey());
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call(
+          "withdraw",
+          nativeToScVal(signer.publicKey(), { type: "address" }),
+          nativeToScVal(amount, { type: "i128" })
+        )
+      )
+      .setTimeout(30)
+      .build();
+
+    const prepared = await this.server.prepareTransaction(tx);
+    prepared.sign(signer);
+    const result = await this.server.sendTransaction(prepared);
+    return result.hash;
+  }
+
+  /**
+   * Delegate wrapped voting power to another address.
+   */
+  async delegate(signer: Keypair, delegatee: string): Promise<string> {
+    const account = await this.server.getAccount(signer.publicKey());
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call(
+          "delegate",
+          nativeToScVal(signer.publicKey(), { type: "address" }),
+          nativeToScVal(delegatee, { type: "address" })
+        )
+      )
+      .setTimeout(30)
+      .build();
+
+    const prepared = await this.server.prepareTransaction(tx);
+    prepared.sign(signer);
+    const result = await this.server.sendTransaction(prepared);
+    return result.hash;
+  }
+
+  /**
+   * Get current voting power for an address.
+   */
+  async getVotes(address: string): Promise<bigint> {
+    const account = await this.server.getAccount(address);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call(
+          "get_votes",
+          nativeToScVal(address, { type: "address" })
+        )
+      )
+      .setTimeout(30)
+      .build();
+    const sim = await this.server.simulateTransaction(tx);
+    if (!SorobanRpc.Api.isSimulationSuccess(sim)) {
+      throw new Error("Simulation failed");
+    }
+    const val = sim.result?.retval;
+    if (!val) return 0n;
+    return BigInt((val as any).value ?? 0);
   }
 }

@@ -1,6 +1,19 @@
 # NebGov Architecture
 
-NebGov is a modular on-chain governance framework for Soroban. It is composed of five independent smart contracts that work together to provide a full governance lifecycle.
+NebGov is a modular on-chain governance framework for Soroban. It is composed of six independent smart contracts that work together to provide a full governance lifecycle and adjacent protocol operations.
+
+## Table of Contents
+
+- [Contract Interaction Flow](#contract-interaction-flow)
+- [Contracts](#contracts)
+- [SDK](#sdk)
+- [Frontend](#frontend)
+- [Treasury Flows](./treasury.md)
+- [Liquidity Contract](./liquidity.md)
+- [Contract Upgrade Mechanism](#contract-upgrade-mechanism)
+- [Proposal States](./proposal-states.md)
+- [Security Considerations](#security-considerations)
+- [Architecture Decision Records](#architecture-decision-records)
 
 ## Contract Interaction Flow
 
@@ -58,6 +71,9 @@ Deploys Governor + Timelock pairs permissionlessly. Any team can deploy their ow
 ### Treasury (`contracts/treasury`)
 A multi-signature treasury controlled by a set of owner addresses and a configurable approval threshold. Integrates with the governor so on-chain proposals can execute treasury transfers automatically.
 
+### Liquidity (`contracts/liquidity`)
+Maintains protocol-managed liquidity pools for paired outcome assets. User-facing pool actions are self-authorized, while privileged configuration changes such as fee updates are restricted to governance and intended to execute through the timelock.
+
 ## SDK (`sdk/`)
 
 `@nebgov/sdk` is a TypeScript client library for interacting with all NebGov contracts. Install via npm/pnpm:
@@ -77,6 +93,7 @@ Pages:
 - `/propose` — Create proposal
 - `/proposal/[id]` — Proposal detail + voting
 - `/treasury` — Treasury balances + pending transactions
+- `/settings` — Build governance parameter update proposals
 
 ## Contract Upgrade Mechanism
 
@@ -106,7 +123,7 @@ Token holders
 This means the authorised principal must be the governor contract itself — the
 only way to satisfy this in production is through the Timelock's cross-contract
 call during proposal execution. Direct calls from any external account, including
-the stored admin, are rejected.
+the stored admin, are rejected. This flow is verified in `contracts/governor/src/tests/upgrade.rs`.
 
 ### Storage Migration
 

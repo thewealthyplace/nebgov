@@ -39,12 +39,19 @@ export function formatCountdown(targetDate: Date): string {
   return `${seconds}s`;
 }
 
+export interface ProposalTimeInfo {
+  label: string;
+  countdown: string;
+  targetLedger: number;
+}
+
 export function getProposalTimeInfo(
   state: string,
   startLedger: number,
   endLedger: number,
-  currentLedger: number
-): { label: string; countdown: string; targetLedger: number } | null {
+  currentLedger: number,
+  vetoWindowCloseLedger?: number,
+): ProposalTimeInfo | null {
   if (currentLedger === 0) return null;
 
   if (state === "Pending" && currentLedger < startLedger) {
@@ -63,5 +70,29 @@ export function getProposalTimeInfo(
     };
   }
 
+  if (state === "Queued" && vetoWindowCloseLedger && currentLedger < vetoWindowCloseLedger) {
+    return {
+      label: "Veto window closes in",
+      countdown: formatCountdown(ledgerToEstimatedDate(vetoWindowCloseLedger, currentLedger)),
+      targetLedger: vetoWindowCloseLedger,
+    };
+  }
+
   return null;
+}
+
+/**
+ * Get a specific countdown for a target ledger.
+ */
+export function getTimerInfo(
+  label: string,
+  targetLedger: number,
+  currentLedger: number
+): ProposalTimeInfo | null {
+  if (currentLedger === 0 || targetLedger <= currentLedger) return null;
+  return {
+    label,
+    countdown: formatCountdown(ledgerToEstimatedDate(targetLedger, currentLedger)),
+    targetLedger,
+  };
 }

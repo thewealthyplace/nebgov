@@ -1,0 +1,277 @@
+#![no_std]
+
+//! Protocol-owned liquidity management for NebGov markets.
+//!
+//! This contract maintains simple two-asset pools used to support market
+//! liquidity around governance-controlled prediction or outcome tokens. End
+//! users can add liquidity, remove liquidity, and swap against a pool using a
+//! constant-product pricing curve with configurable fees.
+//!
+//! The contract integrates with NebGov governance through a stored governor
+//! address. Day-to-day user actions are self-authorized by the caller, while
+//! privileged configuration changes such as fee updates are restricted to the
+//! governor and are intended to be executed through the governor -> timelock ->
+//! liquidity proposal flow.
+//!
+//! Access control model:
+//! - liquidity providers must authorize `add_liquidity` and `remove_liquidity`
+//! - traders must authorize `swap`
+//! - only the configured governor may call `update_pool_fee`
+
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+const MIN_LIQUIDITY: i128 = 1_000;
+const DEFAULT_FEE_BPS: u32 = 30;
+const MAX_FEE_BPS: u32 = 1_000;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Pool {
+    pub reserve_a: i128,
+    pub reserve_b: i128,
+    pub total_lp_supply: i128,
+    pub fee_bps: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LPPosition {
+    pub lp_tokens: i128,
+}
+
+#[contracttype]
+enum DataKey {
+    Governor,
+    Pool(u32, u32),
+    Position(Address, u32, u32),
+}
+
+#[contract]
+pub struct LiquidityContract;
+
+#[contractimpl]
+impl LiquidityContract {
+    /// Initialize the contract with the governor that owns privileged actions.
+    pub fn initialize(env: Env, governor: Address) {
+        governor.require_auth();
+        assert!(
+            !env.storage().instance().has(&DataKey::Governor),
+            "already initialized"
+        );
+        env.storage().instance().set(&DataKey::Governor, &governor);
+    }
+
+    /// Return the configured governor address.
+    pub fn governor(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Governor)
+            .expect("not initialized")
+    }
+
+    /// Add liquidity to a pool and mint LP shares.
+    pub fn add_liquidity(
+        env: Env,
+        provider: Address,
+        outcome_a: u32,
+        outcome_b: u32,
+        amount_a: i128,
+        amount_b: i128,
+    ) -> i128 {
+        provider.require_auth();
+
+        if amount_a <= 0 || amount_b <= 0 {
+            panic!("amounts must be positive");
+        }
+
+        if amount_a < MIN_LIQUIDITY || amount_b < MIN_LIQUIDITY {
+            panic!("below minimum liquidity");
+        }
+
+        let pool_key = Self::pool_key(outcome_a, outcome_b);
+        let mut pool = Self::get_pool_or_default(&env, outcome_a, outcome_b);
+        let lp_tokens = if pool.total_lp_supply == 0 {
+            amount_a
+        } else {
+            (amount_a * pool.total_lp_supply) / pool.reserve_a
+        };
+
+        pool.reserve_a += amount_a;
+        pool.reserve_b += amount_b;
+        pool.total_lp_supply += lp_tokens;
+        env.storage().persistent().set(&pool_key, &pool);
+
+        let position_key = Self::position_key(provider.clone(), outcome_a, outcome_b);
+        let mut position: LPPosition = env
+            .storage()
+            .persistent()
+            .get(&position_key)
+            .unwrap_or(LPPosition { lp_tokens: 0 });
+        position.lp_tokens += lp_tokens;
+        env.storage().persistent().set(&position_key, &position);
+
+        lp_tokens
+    }
+
+    /// Remove liquidity from a pool and burn LP shares.
+    pub fn remove_liquidity(
+        env: Env,
+        provider: Address,
+        outcome_a: u32,
+        outcome_b: u32,
+        lp_tokens: i128,
+    ) -> (i128, i128) {
+        provider.require_auth();
+
+        if lp_tokens <= 0 {
+            panic!("lp_tokens must be positive");
+        }
+
+        let pool_key = Self::pool_key(outcome_a, outcome_b);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("pool not found");
+
+        let position_key = Self::position_key(provider.clone(), outcome_a, outcome_b);
+        let mut position: LPPosition = env
+            .storage()
+            .persistent()
+            .get(&position_key)
+            .expect("no LP position");
+
+        if position.lp_tokens < lp_tokens {
+            panic!("insufficient LP tokens");
+        }
+
+        let amount_a = (lp_tokens * pool.reserve_a) / pool.total_lp_supply;
+        let amount_b = (lp_tokens * pool.reserve_b) / pool.total_lp_supply;
+
+        pool.reserve_a -= amount_a;
+        pool.reserve_b -= amount_b;
+        pool.total_lp_supply -= lp_tokens;
+        position.lp_tokens -= lp_tokens;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        env.storage().persistent().set(&position_key, &position);
+
+        (amount_a, amount_b)
+    }
+
+    /// Swap `amount_in` of one pool asset for the other.
+    pub fn swap(
+        env: Env,
+        trader: Address,
+        outcome_in: u32,
+        outcome_out: u32,
+        amount_in: i128,
+        min_amount_out: i128,
+    ) -> i128 {
+        trader.require_auth();
+
+        if amount_in <= 0 {
+            panic!("amount_in must be positive");
+        }
+
+        let pool_key = Self::pool_key(outcome_in, outcome_out);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("pool not found");
+
+        let amount_out = (amount_in * pool.reserve_b) / (pool.reserve_a + amount_in);
+        let fee = (amount_out * pool.fee_bps as i128) / 10_000;
+        let amount_out_with_fee = amount_out - fee;
+
+        if amount_out_with_fee < min_amount_out {
+            panic!("slippage exceeded");
+        }
+
+        pool.reserve_a += amount_in;
+        pool.reserve_b -= amount_out_with_fee;
+        env.storage().persistent().set(&pool_key, &pool);
+
+        amount_out_with_fee
+    }
+
+    /// Update a pool fee. Only the configured governor may call this.
+    pub fn update_pool_fee(
+        env: Env,
+        caller: Address,
+        outcome_a: u32,
+        outcome_b: u32,
+        fee_bps: u32,
+    ) {
+        caller.require_auth();
+        Self::require_governor(&env, &caller);
+
+        if fee_bps > MAX_FEE_BPS {
+            panic!("fee too high");
+        }
+
+        let pool_key = Self::pool_key(outcome_a, outcome_b);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("pool not found");
+        pool.fee_bps = fee_bps;
+        env.storage().persistent().set(&pool_key, &pool);
+    }
+
+    /// Get the current pool state.
+    pub fn get_pool(env: Env, outcome_a: u32, outcome_b: u32) -> Pool {
+        env.storage()
+            .persistent()
+            .get(&Self::pool_key(outcome_a, outcome_b))
+            .expect("pool not found")
+    }
+
+    /// Get the LP token balance for a provider in a specific pool.
+    pub fn get_lp_position(env: Env, provider: Address, outcome_a: u32, outcome_b: u32) -> i128 {
+        let position: LPPosition = env
+            .storage()
+            .persistent()
+            .get(&Self::position_key(provider, outcome_a, outcome_b))
+            .unwrap_or(LPPosition { lp_tokens: 0 });
+        position.lp_tokens
+    }
+
+    /// Calculate the current pool price as reserve_b / reserve_a scaled by 10_000.
+    pub fn get_price(env: Env, outcome_a: u32, outcome_b: u32) -> i128 {
+        let pool = Self::get_pool(env, outcome_a, outcome_b);
+        if pool.reserve_a == 0 {
+            return 0;
+        }
+        (pool.reserve_b * 10_000) / pool.reserve_a
+    }
+
+    fn require_governor(env: &Env, caller: &Address) {
+        assert!(caller == &Self::governor(env.clone()), "only governor");
+    }
+
+    fn pool_key(outcome_a: u32, outcome_b: u32) -> DataKey {
+        DataKey::Pool(outcome_a, outcome_b)
+    }
+
+    fn position_key(provider: Address, outcome_a: u32, outcome_b: u32) -> DataKey {
+        DataKey::Position(provider, outcome_a, outcome_b)
+    }
+
+    fn get_pool_or_default(env: &Env, outcome_a: u32, outcome_b: u32) -> Pool {
+        env.storage()
+            .persistent()
+            .get(&Self::pool_key(outcome_a, outcome_b))
+            .unwrap_or(Pool {
+                reserve_a: 0,
+                reserve_b: 0,
+                total_lp_supply: 0,
+                fee_bps: DEFAULT_FEE_BPS,
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests;

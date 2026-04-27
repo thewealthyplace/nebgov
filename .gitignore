@@ -1,7 +1,6 @@
 # Rust
 target/
 *.wasm
-Cargo.lock
 
 # Node
 node_modules/
@@ -24,3 +23,4 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+.claude/

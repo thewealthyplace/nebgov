@@ -7,8 +7,15 @@ import {
   Keypair,
   nativeToScVal,
   scValToNative,
+  xdr,
 } from "@stellar/stellar-sdk";
 import { GovernorConfig, Network } from "./types";
+import {
+  TimelockError,
+  TimelockErrorCode,
+  parseTimelockError,
+} from "./errors";
+import { withRetry, isNetworkError } from "./utils";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban-rpc.mainnet.stellar.gateway.fm",
@@ -37,7 +44,7 @@ const NETWORK_PASSPHRASES: Record<Network, string> = {
  *   network: "testnet",
  * });
  *
- * const opId = await client.schedule(signer, targetAddress, calldata, 86400n);
+ * const opId = await client.schedule(signer, targetAddress, calldata, "execute", 86400n);
  * const ready = await client.isReady(opId);
  * if (ready) await client.execute(signer, opId);
  */
@@ -53,6 +60,17 @@ export class TimelockClient {
     this.server = new SorobanRpc.Server(rpcUrl, { allowHttp: false });
     this.contract = new Contract(config.timelockAddress);
     this.networkPassphrase = NETWORK_PASSPHRASES[config.network];
+  }
+
+  private async retry<T>(
+    fn: () => Promise<T>,
+    filter?: (e: unknown) => boolean,
+  ): Promise<T> {
+    return withRetry(fn, {
+      maxAttempts: this.config.maxAttempts,
+      baseDelayMs: this.config.baseDelayMs,
+      retryOn: filter ?? isNetworkError,
+    });
   }
 
   /**
@@ -71,40 +89,142 @@ export class TimelockClient {
     signer: Keypair,
     target: string,
     data: Buffer,
-    delay: bigint
+    fnNameOrDelay: string | bigint,
+    delayArg?: bigint,
   ): Promise<string> {
-    const account = await this.server.getAccount(signer.publicKey());
-
-    const tx = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: this.networkPassphrase,
-    })
-      .addOperation(
-        this.contract.call(
-          "schedule",
-          nativeToScVal(signer.publicKey(), { type: "address" }),
-          nativeToScVal(target, { type: "address" }),
-          nativeToScVal(data, { type: "bytes" }),
-          nativeToScVal(delay, { type: "u64" })
-        )
-      )
-      .setTimeout(30)
-      .build();
-
-    const prepared = await this.server.prepareTransaction(tx);
-    prepared.sign(signer);
-
-    const result = await this.server.sendTransaction(prepared);
-    if (result.status === "ERROR") {
-      throw new Error(`schedule failed: ${JSON.stringify(result)}`);
+    const fnName =
+      typeof fnNameOrDelay === "string" ? fnNameOrDelay : "execute";
+    const delay =
+      typeof fnNameOrDelay === "bigint" ? fnNameOrDelay : delayArg;
+    if (delay === undefined) {
+      throw new TimelockError(
+        TimelockErrorCode.MissingReturnValue,
+        "schedule requires a delay",
+      );
     }
 
-    const confirmed = await this.pollForConfirmation(result.hash);
-    const returnVal = confirmed.returnValue;
-    if (!returnVal) throw new Error("schedule: missing return value");
+    return this.retry(async () => {
+      const account = await this.server.getAccount(signer.publicKey());
 
-    const bytes = scValToNative(returnVal) as Uint8Array;
-    return Buffer.from(bytes).toString("hex");
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          this.contract.call(
+            "schedule",
+            nativeToScVal(signer.publicKey(), { type: "address" }),
+            nativeToScVal(target, { type: "address" }),
+            nativeToScVal(data, { type: "bytes" }),
+            nativeToScVal(fnName, { type: "symbol" }),
+            nativeToScVal(delay, { type: "u64" }),
+          ),
+        )
+        .setTimeout(30)
+        .build();
+
+      const prepared = await this.server.prepareTransaction(tx);
+      prepared.sign(signer);
+
+      const result = await this.server.sendTransaction(prepared);
+      if (result.status === "ERROR") {
+        throw parseTimelockError(result);
+      }
+
+      const confirmed = await this.pollForConfirmation(result.hash);
+      const returnVal = confirmed.returnValue;
+      if (!returnVal) {
+        throw new TimelockError(
+          TimelockErrorCode.MissingReturnValue,
+          "No return value from schedule",
+        );
+      }
+
+      const bytes = scValToNative(returnVal) as Uint8Array;
+      return Buffer.from(bytes).toString("hex");
+    }, (e) => this.isRetryableSubmissionError(e));
+  }
+
+  /**
+   * Schedule multiple timelock operations in a single transaction.
+   *
+   * Every array argument must have the same length.
+   *
+   * @returns Hex-encoded operation IDs in the same order as the inputs.
+   */
+  async scheduleBatch(
+    signer: Keypair,
+    targets: string[],
+    data: Array<Buffer | Uint8Array>,
+    fnNames: string[],
+    delay: bigint,
+    predecessors: Array<Buffer | Uint8Array>,
+    salts: Array<Buffer | Uint8Array>,
+  ): Promise<string[]> {
+    return this.retry(async () => {
+      const len = targets.length;
+      if (len === 0)
+        throw new Error("scheduleBatch requires at least one operation");
+      if (
+        data.length !== len ||
+        fnNames.length !== len ||
+        predecessors.length !== len ||
+        salts.length !== len
+      ) {
+        throw new Error("scheduleBatch input arrays must have equal length");
+      }
+
+      const account = await this.server.getAccount(signer.publicKey());
+      const targetsScVal = xdr.ScVal.scvVec(
+        targets.map((item) => nativeToScVal(item, { type: "address" })),
+      );
+      const dataScVal = xdr.ScVal.scvVec(
+        data.map((item) => nativeToScVal(item, { type: "bytes" })),
+      );
+      const fnNamesScVal = xdr.ScVal.scvVec(
+        fnNames.map((item) => nativeToScVal(item, { type: "symbol" })),
+      );
+      const predecessorsScVal = xdr.ScVal.scvVec(
+        predecessors.map((item) => nativeToScVal(item, { type: "bytes" })),
+      );
+      const saltsScVal = xdr.ScVal.scvVec(
+        salts.map((item) => nativeToScVal(item, { type: "bytes" })),
+      );
+
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          this.contract.call(
+            "schedule_batch",
+            nativeToScVal(signer.publicKey(), { type: "address" }),
+            targetsScVal,
+            dataScVal,
+            fnNamesScVal,
+            nativeToScVal(delay, { type: "u64" }),
+            predecessorsScVal,
+            saltsScVal,
+          ),
+        )
+        .setTimeout(30)
+        .build();
+
+      const prepared = await this.server.prepareTransaction(tx);
+      prepared.sign(signer);
+
+      const result = await this.server.sendTransaction(prepared);
+      if (result.status === "ERROR") {
+        throw new Error(`scheduleBatch failed: ${JSON.stringify(result)}`);
+      }
+
+      const confirmed = await this.pollForConfirmation(result.hash);
+      const returnVal = confirmed.returnValue;
+      if (!returnVal) throw new Error("scheduleBatch: missing return value");
+
+      const rawIds = scValToNative(returnVal) as Uint8Array[];
+      return rawIds.map((bytes) => Buffer.from(bytes).toString("hex"));
+    }, (e) => this.isRetryableSubmissionError(e));
   }
 
   /**
@@ -117,30 +237,32 @@ export class TimelockClient {
    * @param opId   - Hex-encoded operation ID returned by {@link schedule}
    */
   async execute(signer: Keypair, opId: string): Promise<void> {
-    const account = await this.server.getAccount(signer.publicKey());
+    return this.retry(async () => {
+      const account = await this.server.getAccount(signer.publicKey());
 
-    const tx = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: this.networkPassphrase,
-    })
-      .addOperation(
-        this.contract.call(
-          "execute",
-          nativeToScVal(signer.publicKey(), { type: "address" }),
-          nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" })
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          this.contract.call(
+            "execute",
+            nativeToScVal(signer.publicKey(), { type: "address" }),
+            nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" }),
+          ),
         )
-      )
-      .setTimeout(30)
-      .build();
+        .setTimeout(30)
+        .build();
 
-    const prepared = await this.server.prepareTransaction(tx);
-    prepared.sign(signer);
+      const prepared = await this.server.prepareTransaction(tx);
+      prepared.sign(signer);
 
-    const result = await this.server.sendTransaction(prepared);
-    if (result.status === "ERROR") {
-      throw new Error(`execute failed: ${JSON.stringify(result)}`);
-    }
-    await this.pollForConfirmation(result.hash);
+      const result = await this.server.sendTransaction(prepared);
+      if (result.status === "ERROR") {
+        throw parseTimelockError(result);
+      }
+      await this.pollForConfirmation(result.hash);
+    }, (e) => this.isRetryableSubmissionError(e));
   }
 
   /**
@@ -153,30 +275,32 @@ export class TimelockClient {
    * @param opId   - Hex-encoded operation ID returned by {@link schedule}
    */
   async cancel(signer: Keypair, opId: string): Promise<void> {
-    const account = await this.server.getAccount(signer.publicKey());
+    return this.retry(async () => {
+      const account = await this.server.getAccount(signer.publicKey());
 
-    const tx = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: this.networkPassphrase,
-    })
-      .addOperation(
-        this.contract.call(
-          "cancel",
-          nativeToScVal(signer.publicKey(), { type: "address" }),
-          nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" })
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          this.contract.call(
+            "cancel",
+            nativeToScVal(signer.publicKey(), { type: "address" }),
+            nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" }),
+          ),
         )
-      )
-      .setTimeout(30)
-      .build();
+        .setTimeout(30)
+        .build();
 
-    const prepared = await this.server.prepareTransaction(tx);
-    prepared.sign(signer);
+      const prepared = await this.server.prepareTransaction(tx);
+      prepared.sign(signer);
 
-    const result = await this.server.sendTransaction(prepared);
-    if (result.status === "ERROR") {
-      throw new Error(`cancel failed: ${JSON.stringify(result)}`);
-    }
-    await this.pollForConfirmation(result.hash);
+      const result = await this.server.sendTransaction(prepared);
+      if (result.status === "ERROR") {
+        throw parseTimelockError(result);
+      }
+      await this.pollForConfirmation(result.hash);
+    }, (e) => this.isRetryableSubmissionError(e));
   }
 
   /**
@@ -188,25 +312,27 @@ export class TimelockClient {
    * @param opId - Hex-encoded operation ID
    */
   async isReady(opId: string): Promise<boolean> {
-    const result = await this.server.simulateTransaction(
-      new TransactionBuilder(
-        await this.server.getAccount(this.config.timelockAddress),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
-      )
-        .addOperation(
-          this.contract.call(
-            "is_ready",
-            nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" })
-          )
+    return this.retry(async () => {
+      const result = await this.server.simulateTransaction(
+        new TransactionBuilder(
+          await this.server.getAccount(this.readAccount()),
+          { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
         )
-        .setTimeout(30)
-        .build()
-    );
+          .addOperation(
+            this.contract.call(
+              "is_ready",
+              nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" }),
+            ),
+          )
+          .setTimeout(30)
+          .build(),
+      );
 
-    if (SorobanRpc.Api.isSimulationError(result)) return false;
-    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
-      .result?.retval;
-    return raw ? (scValToNative(raw) as boolean) : false;
+      if (SorobanRpc.Api.isSimulationError(result)) return false;
+      const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+        .result?.retval;
+      return raw ? (scValToNative(raw) as boolean) : false;
+    });
   }
 
   /**
@@ -218,37 +344,76 @@ export class TimelockClient {
    * @param opId - Hex-encoded operation ID
    */
   async isPending(opId: string): Promise<boolean> {
-    const result = await this.server.simulateTransaction(
-      new TransactionBuilder(
-        await this.server.getAccount(this.config.timelockAddress),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
-      )
-        .addOperation(
-          this.contract.call(
-            "is_pending",
-            nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" })
-          )
+    return this.retry(async () => {
+      const result = await this.server.simulateTransaction(
+        new TransactionBuilder(
+          await this.server.getAccount(this.readAccount()),
+          { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
         )
-        .setTimeout(30)
-        .build()
-    );
+          .addOperation(
+            this.contract.call(
+              "is_pending",
+              nativeToScVal(Buffer.from(opId, "hex"), { type: "bytes" }),
+            ),
+          )
+          .setTimeout(30)
+          .build(),
+      );
 
-    if (SorobanRpc.Api.isSimulationError(result)) return false;
-    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
-      .result?.retval;
-    return raw ? (scValToNative(raw) as boolean) : false;
+      if (SorobanRpc.Api.isSimulationError(result)) return false;
+      const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+        .result?.retval;
+      return raw ? (scValToNative(raw) as boolean) : false;
+    });
   }
 
   /**
    * Get the minimum enforced delay for new operations (in seconds).
    */
   async minDelay(): Promise<bigint> {
+    return this.retry(async () => {
+      const result = await this.server.simulateTransaction(
+        new TransactionBuilder(
+          await this.server.getAccount(this.readAccount()),
+          { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
+        )
+          .addOperation(this.contract.call("min_delay"))
+          .setTimeout(30)
+          .build(),
+      );
+
+      if (SorobanRpc.Api.isSimulationError(result)) return 0n;
+      const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+        .result?.retval;
+      return raw ? BigInt(scValToNative(raw)) : 0n;
+    });
+  }
+
+  private isRetryableSubmissionError(e: unknown): boolean {
+    if (isNetworkError(e)) return true;
+    if (e instanceof TimelockError) {
+      // Don't retry on contract logic errors (codes < 100)
+      return (
+        e.code >= 100 &&
+        e.code !== TimelockErrorCode.TransactionFailed &&
+        e.code !== TimelockErrorCode.MissingReturnValue
+      );
+    }
+    const msg = String(e);
+    if (msg.includes("TransactionAlreadyInMempool")) return false;
+    return false;
+  }
+
+  /**
+   * Get the configured execution window (in seconds).
+   */
+  async executionWindow(): Promise<bigint> {
     const result = await this.server.simulateTransaction(
       new TransactionBuilder(
-        await this.server.getAccount(this.config.timelockAddress),
+        await this.server.getAccount(this.readAccount()),
         { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
       )
-        .addOperation(this.contract.call("min_delay"))
+        .addOperation(this.contract.call("execution_window"))
         .setTimeout(30)
         .build()
     );
@@ -261,21 +426,31 @@ export class TimelockClient {
 
   // --- Internal ---
 
+  private readAccount(): string {
+    return this.config.simulationAccount ?? this.config.timelockAddress;
+  }
+
   private async pollForConfirmation(
     hash: string,
     retries = 10,
-    delayMs = 2000
+    delayMs = 2000,
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     for (let i = 0; i < retries; i++) {
       await new Promise((r) => setTimeout(r, delayMs));
-      const status = await this.server.getTransaction(hash);
+      const status = await this.retry(() => this.server.getTransaction(hash));
       if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
         return status as SorobanRpc.Api.GetSuccessfulTransactionResponse;
       }
       if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-        throw new Error(`Transaction failed: ${hash}`);
+        throw new TimelockError(
+          TimelockErrorCode.TransactionFailed,
+          `Transaction failed: ${hash}`
+        );
       }
     }
-    throw new Error(`Transaction not confirmed after ${retries} retries`);
+    throw new TimelockError(
+      TimelockErrorCode.TransactionTimeout,
+      `Transaction not confirmed after ${retries} retries`
+    );
   }
 }

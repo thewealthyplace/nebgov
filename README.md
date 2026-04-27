@@ -43,13 +43,37 @@ Get started by deploying your first NebGov DAO to the Stellar testnet in under 1
 
 👉 **[Deploy your first DAO on Stellar with NebGov](./docs/tutorial.md)**
 
+### Local development stack (Docker)
+
+Bring up Postgres + indexer + backend + app with one command:
+
+```bash
+cp .env.example .env
+# Set GOVENOR_ADDRESS in .env (required)
+docker compose up --build
+```
+
+Then open:
+
+- App: `http://localhost:3000`
+- Backend health: `http://localhost:3001/health`
+- Indexer health: `http://localhost:3002/health`
+
 For full setup instructions and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+For a step-by-step local development guide, see [docs/local-development.md](./docs/local-development.md).
 
 ---
 
 ## Architecture
 
 See [docs/architecture.md](./docs/architecture.md) for the full design overview.
+
+## Production Deployment Guides
+
+- [docs/parameter-guide.md](./docs/parameter-guide.md) — safe governance parameter ranges and preset configurations
+- [docs/security.md](./docs/security.md) — treasury reentrancy analysis and contract security notes
+- [docs/deployments.md](./docs/deployments.md) — official contract addresses for all networks
 
 ```
 propose() → Governor → [voting period] → queue() → Timelock → execute()

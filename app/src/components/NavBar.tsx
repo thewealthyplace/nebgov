@@ -17,26 +17,45 @@ import {
   Wallet2,
   Sun,
   Moon,
+  Bell,
+  Settings,
 } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
+import { useTranslations } from "next-intl";
 import toast from "react-hot-toast";
+import { loadNotificationHistory } from "../lib/governance-notifications";
+import { useGovernanceBalance } from "../lib/use-governance-balance";
+
+function formatGovernanceAmount(v: bigint): string {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return `${v.toString()} GOV`;
+  if (n >= 10_000) {
+    return `${new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(n)} GOV`;
+  }
+  return `${new Intl.NumberFormat("en").format(n)} GOV`;
+}
 
 const NAV_LINKS = [
   { name: "Proposals", href: "/", icon: LayoutDashboard },
+  { name: "Governors", href: "/governors", icon: LayoutDashboard },
   { name: "Notifications", href: "/notifications", icon: Bell },
   { name: "Delegates", href: "/delegates", icon: Users },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Treasury", href: "/treasury", icon: Wallet2 },
+  { name: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function NavBar() {
+  const t = useTranslations("nav");
   const pathname = usePathname();
   const { address, publicKey, isConnected, isConnecting, connect, disconnect } =
     useWallet();
+  const gov = useGovernanceBalance(isConnected ? publicKey : null);
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isWalletMenuOpen, setIsWalletMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [unread, setUnread] = useState(0);
   const drawerRef = useRef<HTMLDivElement>(null);
   const { theme, setTheme } = useTheme();
 
@@ -59,6 +78,16 @@ export function NavBar() {
       document.body.style.overflow = "";
     };
   }, [isMenuOpen]);
+
+  useEffect(() => {
+    const compute = () => {
+      const rows = loadNotificationHistory();
+      setUnread(rows.filter((r) => !r.read).length);
+    };
+    compute();
+    window.addEventListener("nebgov-notify-history", compute);
+    return () => window.removeEventListener("nebgov-notify-history", compute);
+  }, []);
 
   useEffect(() => {
     if (!isWalletMenuOpen) return;
@@ -92,8 +121,8 @@ export function NavBar() {
 
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 bg-white border-b z-50 h-16 transition-all duration-200 ${
-        scrolled ? "shadow-sm border-gray-200" : "border-gray-100"
+      className={`fixed top-0 left-0 right-0 bg-white dark:bg-gray-900 border-b z-50 h-16 transition-all duration-200 ${
+        scrolled ? "shadow-sm border-gray-200 dark:border-gray-800" : "border-gray-100 dark:border-gray-800"
       }`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between">
@@ -106,7 +135,7 @@ export function NavBar() {
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold transform group-hover:rotate-6 transition-transform select-none">
               N
             </div>
-            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-600 mr-4">
+            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-400 mr-4">
               NebGov
             </span>
           </Link>
@@ -125,11 +154,18 @@ export function NavBar() {
                   aria-current={isActive ? "page" : undefined}
                   className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
                     isActive
-                      ? "text-indigo-600 bg-indigo-50"
-                      : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                      ? "text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20"
+                      : "text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-800"
                   }`}
                 >
-                  {link.name}
+                  <span className="inline-flex items-center gap-2">
+                    {link.name}
+                    {link.href === "/notifications" && unread > 0 && (
+                      <span className="min-w-5 h-5 px-1.5 rounded-full bg-indigo-600 text-white text-[11px] leading-5 text-center">
+                        {unread > 99 ? "99+" : unread}
+                      </span>
+                    )}
+                  </span>
                 </Link>
               );
             })}
@@ -139,8 +175,8 @@ export function NavBar() {
         <div className="flex items-center gap-4">
           <button
             onClick={toggleTheme}
-            aria-label="Toggle theme"
-            className="p-2 rounded-xl text-gray-600 hover:bg-gray-100 transition-colors"
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            className="p-2 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
             {theme === "dark" ? (
               <Sun className="w-5 h-5" aria-hidden />
@@ -148,6 +184,24 @@ export function NavBar() {
               <Moon className="w-5 h-5" aria-hidden />
             )}
           </button>
+          <select
+            aria-label="Select language"
+            className="p-2 rounded-xl text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-xs font-medium bg-transparent border-none cursor-pointer"
+            defaultValue="en"
+            onChange={(e) => {
+              const selectedLocale = e.target.value;
+              const cookies = document.cookie.split(";").reduce((acc, cookie) => {
+                const [key, value] = cookie.trim().split("=");
+                if (key !== "locale") acc.push(`${key}=${value}`);
+                return acc;
+              }, [] as string[]);
+              document.cookie = [...cookies, `locale=${selectedLocale}`].join("; ") + "; path=/";
+              window.location.reload();
+            }}
+          >
+            <option value="en">EN</option>
+            <option value="es" disabled>ES</option>
+          </select>
           <div className="hidden md:block relative">
             {isConnected ? (
               <div className="relative" ref={drawerRef}>
@@ -155,13 +209,29 @@ export function NavBar() {
                   onClick={() => setIsWalletMenuOpen((v) => !v)}
                   aria-expanded={isWalletMenuOpen}
                   aria-haspopup="menu"
-                  className="flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full border border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm transition-all text-sm font-medium text-gray-700"
+                  className="flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm transition-all text-sm font-medium text-gray-700 dark:text-gray-200"
                 >
                   <div
                     className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex-shrink-0"
                     aria-hidden
                   />
                   <span className="max-w-[9rem] truncate">{address}</span>
+                  {gov.loading ? (
+                    <span className="ml-1 inline-flex items-center">
+                      <span className="h-4 w-14 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse" />
+                    </span>
+                  ) : gov.baseVotes !== null && gov.votingPower !== null ? (
+                    <span
+                      className="ml-1 px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-200 text-xs font-semibold"
+                      title={[
+                        `Raw: ${formatGovernanceAmount(gov.baseVotes)}`,
+                        `Voting power: ${formatGovernanceAmount(gov.votingPower)}`,
+                        `Delegatee: ${gov.delegatee ?? "—"}`,
+                      ].join("\n")}
+                    >
+                      {formatGovernanceAmount(gov.baseVotes)}
+                    </span>
+                  ) : null}
                   <ChevronDown
                     className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${
                       isWalletMenuOpen ? "rotate-180" : ""
@@ -205,7 +275,7 @@ export function NavBar() {
 
                       <Link
                         role="menuitem"
-                        href={`/profile?address=${publicKey}`}
+                        href={publicKey ? `/profile/${publicKey}` : "/"}
                         className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
                       >
                         <User className="w-4 h-4" aria-hidden />
@@ -301,7 +371,12 @@ export function NavBar() {
                       className={`w-5 h-5 flex-shrink-0 ${isActive ? "text-indigo-600" : "text-gray-400"}`}
                       aria-hidden
                     />
-                    {link.name}
+                    <span className="flex-1">{link.name}</span>
+                    {link.href === "/notifications" && unread > 0 && (
+                      <span className="min-w-6 h-6 px-2 rounded-full bg-indigo-600 text-white text-xs leading-6 text-center">
+                        {unread > 99 ? "99+" : unread}
+                      </span>
+                    )}
                   </Link>
                 );
               })}

@@ -37,16 +37,39 @@ jobs:
         run: cargo install --locked stellar-cli
 
       - name: Build WASMs for test dependencies
-        run: stellar contract build
+        run: |
+          cargo build --target wasm32v1-none --release \
+            -p sorogov-governor \
+            -p sorogov-timelock \
+            -p sorogov-token-votes \
+            -p sorogov-governor-factory \
+            -p sorogov-treasury \
+            -p sorogov-liquidity
 
       - name: Run tests
-        run: cargo test --workspace
+        run: |
+          cargo test \
+            -p sorogov-governor \
+            -p sorogov-timelock \
+            -p sorogov-token-votes \
+            -p sorogov-governor-factory \
+            -p sorogov-liquidity \
+            -p sorogov-token-votes-wrapper
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin
 
       - name: Generate coverage
-        run: cargo tarpaulin --workspace --out xml --output-dir coverage/
+        run: |
+          cargo tarpaulin \
+            -p sorogov-governor \
+            -p sorogov-timelock \
+            -p sorogov-token-votes \
+            -p sorogov-governor-factory \
+            -p sorogov-liquidity \
+            -p sorogov-token-votes-wrapper \
+            --out xml \
+            --output-dir coverage/
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -55,6 +78,39 @@ jobs:
           flags: rust
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run clippy
+        run: |
+          cargo clippy \
+            -p sorogov-governor \
+            -p sorogov-timelock \
+            -p sorogov-token-votes \
+            -p sorogov-governor-factory \
+            -p sorogov-liquidity \
+            -p sorogov-token-votes-wrapper \
+            --all-targets \
+            -- -D warnings
 
   build:
     name: Build WASM
@@ -83,7 +139,55 @@ jobs:
         run: cargo install --locked stellar-cli
 
       - name: Build release WASM
-        run: stellar contract build
+        run: |
+          cargo build --target wasm32v1-none --release \
+            -p sorogov-governor \
+            -p sorogov-timelock \
+            -p sorogov-token-votes \
+            -p sorogov-governor-factory \
+            -p sorogov-treasury \
+            -p sorogov-liquidity
+
+      - name: Check contract WASM sizes
+        run: |
+          shopt -s nullglob
+          files=(target/wasm32v1-none/release/*.wasm)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "ERROR: no WASM artifacts found"
+            exit 1
+          fi
+
+          fail=0
+          {
+            echo "## Contract WASM sizes"
+            echo
+            echo "| Contract | Size (bytes) | Size (KiB) | Status |"
+            echo "| --- | ---: | ---: | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for wasm in "${files[@]}"; do
+            size=$(stat -c%s "$wasm")
+            name=$(basename "$wasm")
+            size_kib=$(awk "BEGIN { printf \"%.1f\", $size / 1024 }")
+            status="OK"
+
+            echo "$name: ${size} bytes"
+
+            if [ "$size" -gt 102400 ]; then
+              status="ERROR"
+              fail=1
+              echo "ERROR: $name exceeds 100KB limit (${size} bytes)"
+            elif [ "$size" -gt 81920 ]; then
+              status="WARNING"
+              echo "WARNING: $name is over 80KB (${size} bytes)"
+            fi
+
+            printf "| %s | %s | %s | %s |\n" "$name" "$size" "$size_kib" "$status" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
@@ -104,9 +208,40 @@ jobs:
         with:
           targets: wasm32v1-none
 
+      - name: Audit authorization checks
+        run: |
+          echo "=== Authorization Audit ==="
+          # Find all invoke_contract calls
+          INVOKES=$(grep -rn "invoke_contract" contracts/ --include="*.rs" || true)
+
+          if [ -n "$INVOKES" ]; then
+            echo "Found invoke_contract calls - verifying authorization:"
+            echo "$INVOKES"
+            echo ""
+            echo "✓ Manual review: Each invoke_contract call should have:"
+            echo "  1. caller.require_auth() before the invoke, OR"
+            echo "  2. env.current_contract_address().require_auth() for self-calls, OR"
+            echo "  3. Documented reason if no auth check (e.g., read-only query)"
+            echo ""
+          else
+            echo "✓ No invoke_contract calls found"
+          fi
+
+          # Count all require_auth calls
+          AUTH_COUNT=$(grep -r "require_auth()" contracts/ --include="*.rs" | wc -l)
+          echo "Total require_auth() calls: $AUTH_COUNT"
+          echo "See docs/permissions.md for complete authorization matrix"
+
       - name: Run CoinFabrik Scout security scanner
         uses: CoinFabrik/scout-actions@v3.2
         with:
           working_directory: .
           fail_on_error: false
 
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

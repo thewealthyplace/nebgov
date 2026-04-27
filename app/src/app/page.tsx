@@ -53,105 +53,155 @@ function ProposalSkeleton() {
 export default function ProposalsPage() {
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalCount, setTotalCount] = useState(0n);
+  const [nextCursor, setNextCursor] = useState<number | undefined>();
+  const [hasMore, setHasMore] = useState(false);
+
+  const fetchProposals = async (cursor?: number, append = false) => {
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    try {
+      // Read environment variables
+      const governorAddress = process.env.NEXT_PUBLIC_GOVERNOR_ADDRESS;
+      const timelockAddress = process.env.NEXT_PUBLIC_TIMELOCK_ADDRESS;
+      const votesAddress = process.env.NEXT_PUBLIC_VOTES_ADDRESS;
+      const network = (process.env.NEXT_PUBLIC_NETWORK ||
+        "testnet") as Network;
+      const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
+      const indexerUrl = process.env.NEXT_PUBLIC_INDEXER_URL;
+
+      // Validate required environment variables
+      if (!governorAddress || !timelockAddress || !votesAddress) {
+        throw new Error(
+          "Missing required environment variables. Please check .env.local configuration.",
+        );
+      }
+
+      // Try indexer first if available
+      if (indexerUrl) {
+        try {
+          const url = new URL(`${indexerUrl}/proposals`);
+          url.searchParams.set('limit', PROPOSALS_PER_PAGE.toString());
+          if (cursor) {
+            url.searchParams.set('before', cursor.toString());
+          }
+
+          const response = await fetch(url.toString());
+          if (response.ok) {
+            const data = await response.json();
+            
+            if (append) {
+              setProposals(prev => [...prev, ...data.proposals]);
+            } else {
+              setProposals(data.proposals);
+            }
+            
+            setNextCursor(data.nextCursor);
+            setHasMore(data.hasMore || false);
+            return;
+          }
+        } catch (indexerError) {
+          console.warn("Indexer failed, falling back to on-chain queries:", indexerError);
+        }
+      }
+
+      // Fall back to on-chain queries
+      const client = new GovernorClient({
+        governorAddress,
+        timelockAddress,
+        votesAddress,
+        network,
+        ...(rpcUrl && { rpcUrl }),
+      });
+
+      // Get total proposal count
+      const count = await client.proposalCount();
+
+      if (count === 0n) {
+        setProposals([]);
+        setHasMore(false);
+        return;
+      }
+
+      // For on-chain fallback, use simple pagination
+      const currentPage = cursor ? Math.floor((Number(count) - cursor) / PROPOSALS_PER_PAGE) + 1 : 1;
+      const startIdx = Number(count) - (currentPage - 1) * PROPOSALS_PER_PAGE;
+      const endIdx = Math.max(startIdx - PROPOSALS_PER_PAGE, 0);
+
+      // Fetch proposals in reverse order (newest first)
+      const proposalPromises: Promise<ProposalSummary | null>[] = [];
+      for (let i = startIdx; i > endIdx && i > 0; i--) {
+        proposalPromises.push(
+          (async () => {
+            try {
+              const proposalId = BigInt(i);
+
+              // Fetch state and votes in parallel
+              const [state, votes] = await Promise.all([
+                client.getProposalState(proposalId),
+                client.getProposalVotes(proposalId),
+              ]);
+
+              return {
+                id: proposalId,
+                description: `Proposal ${i}`, // TODO: Fetch actual description in future issue
+                state,
+                votesFor: votes.votesFor,
+                votesAgainst: votes.votesAgainst,
+                endLedger: 0, // TODO: Fetch actual endLedger in future issue
+              };
+            } catch (err) {
+              console.error(`Error fetching proposal ${i}:`, err);
+              return null;
+            }
+          })(),
+        );
+      }
+
+      const results = await Promise.all(proposalPromises);
+      const validProposals = results.filter(
+        (p): p is ProposalSummary => p !== null,
+      );
+
+      if (append) {
+        setProposals(prev => [...prev, ...validProposals]);
+      } else {
+        setProposals(validProposals);
+      }
+      
+      // Set cursor for next page
+      if (validProposals.length > 0) {
+        setNextCursor(Number(validProposals[validProposals.length - 1].id));
+        setHasMore(endIdx > 0);
+      } else {
+        setHasMore(false);
+      }
+    } catch (err) {
+      console.error("Error fetching proposals:", err);
+      setError(
+        err instanceof Error ? err.message : "Failed to load proposals",
+      );
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
-    async function fetchProposals() {
-      setLoading(true);
-      setError(null);
-
-      try {
-        // Read environment variables
-        const governorAddress = process.env.NEXT_PUBLIC_GOVERNOR_ADDRESS;
-        const timelockAddress = process.env.NEXT_PUBLIC_TIMELOCK_ADDRESS;
-        const votesAddress = process.env.NEXT_PUBLIC_VOTES_ADDRESS;
-        const network = (process.env.NEXT_PUBLIC_NETWORK ||
-          "testnet") as Network;
-        const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
-
-        // Validate required environment variables
-        if (!governorAddress || !timelockAddress || !votesAddress) {
-          throw new Error(
-            "Missing required environment variables. Please check .env.local configuration.",
-          );
-        }
-
-        // Initialize GovernorClient
-        const client = new GovernorClient({
-          governorAddress,
-          timelockAddress,
-          votesAddress,
-          network,
-          ...(rpcUrl && { rpcUrl }),
-        });
-
-        // Get total proposal count
-        const count = await client.proposalCount();
-        setTotalCount(count);
-
-        if (count === 0n) {
-          setProposals([]);
-          setLoading(false);
-          return;
-        }
-
-        // Calculate which proposals to fetch for current page
-        const startIdx = Number(count) - (currentPage - 1) * PROPOSALS_PER_PAGE;
-        const endIdx = Math.max(startIdx - PROPOSALS_PER_PAGE, 0);
-
-        // Fetch proposals in reverse order (newest first)
-        const proposalPromises: Promise<ProposalSummary | null>[] = [];
-        for (let i = startIdx; i > endIdx && i > 0; i--) {
-          proposalPromises.push(
-            (async () => {
-              try {
-                const proposalId = BigInt(i);
-
-                // Fetch state and votes in parallel
-                const [state, votes] = await Promise.all([
-                  client.getProposalState(proposalId),
-                  client.getProposalVotes(proposalId),
-                ]);
-
-                return {
-                  id: proposalId,
-                  description: `Proposal ${i}`, // TODO: Fetch actual description in future issue
-                  state,
-                  votesFor: votes.votesFor,
-                  votesAgainst: votes.votesAgainst,
-                  endLedger: 0, // TODO: Fetch actual endLedger in future issue
-                };
-              } catch (err) {
-                console.error(`Error fetching proposal ${i}:`, err);
-                return null;
-              }
-            })(),
-          );
-        }
-
-        const results = await Promise.all(proposalPromises);
-        const validProposals = results.filter(
-          (p): p is ProposalSummary => p !== null,
-        );
-
-        setProposals(validProposals);
-      } catch (err) {
-        console.error("Error fetching proposals:", err);
-        setError(
-          err instanceof Error ? err.message : "Failed to load proposals",
-        );
-      } finally {
-        setLoading(false);
-      }
-    }
-
     fetchProposals();
-  }, [currentPage]);
+  }, []);
 
-  const totalPages = Math.ceil(Number(totalCount) / PROPOSALS_PER_PAGE);
-  const hasMultiplePages = totalPages > 1;
+  const loadMore = () => {
+    if (nextCursor && hasMore && !loadingMore) {
+      fetchProposals(nextCursor, true);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -252,6 +302,8 @@ export default function ProposalsPage() {
                   </div>
                   <span
                     className={`ml-4 shrink-0 px-3 py-1 rounded-full text-xs font-medium ${STATE_COLORS[p.state]}`}
+                    role="status"
+                    aria-label={`Proposal status: ${p.state}`}
                   >
                     {p.state}
                   </span>
@@ -260,31 +312,16 @@ export default function ProposalsPage() {
             ))}
           </div>
 
-          {/* Pagination */}
-          {hasMultiplePages && (
-            <div className="mt-8 flex items-center justify-between">
-              <div className="text-sm text-gray-500">
-                Page {currentPage} of {totalPages} ({totalCount.toString()}{" "}
-                proposals total)
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Previous
-                </button>
-                <button
-                  onClick={() =>
-                    setCurrentPage((p) => Math.min(totalPages, p + 1))
-                  }
-                  disabled={currentPage === totalPages}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Next
-                </button>
-              </div>
+          {/* Load More Button */}
+          {hasMore && (
+            <div className="mt-8 text-center">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {loadingMore ? "Loading..." : "Load More"}
+              </button>
             </div>
           )}
         </>
