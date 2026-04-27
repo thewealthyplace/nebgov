@@ -12,6 +12,7 @@ const TTL = {
   proposalVotes: 15_000, // 15 seconds
   delegates: 60_000, // 60 seconds
   profile: 30_000, // 30 seconds
+  stats: 60_000, // 60 seconds
 };
 
 const HEALTH_LAG_THRESHOLD = Number(process.env.HEALTH_LAG_THRESHOLD ?? 100);
@@ -73,6 +74,69 @@ async function getHealthStatus(server: SorobanRpc.Server): Promise<HealthRespons
   };
 }
 
+interface StatsResponse {
+  total_proposals: number;
+  active_proposals: number;
+  total_votes_cast: number;
+  unique_voters: number;
+  total_delegates: number;
+  participation_rate: number;
+  last_updated: string;
+}
+
+async function getStatsStatus(server: SorobanRpc.Server): Promise<StatsResponse> {
+  const latestLedger = await server.getLatestLedger();
+  const currentLedger = latestLedger.sequence;
+
+  const [
+    totalProposalsRes,
+    activeProposalsRes,
+    totalVotesRes,
+    uniqueVotersRes,
+    totalDelegatesRes,
+    executedProposalsRes,
+  ] = await Promise.all([
+    pool.query("SELECT COUNT(*)::int AS count FROM proposals"),
+    pool.query(
+      `SELECT COUNT(*)::int AS count FROM proposals
+       WHERE start_ledger <= $1 AND end_ledger >= $1 AND executed = false AND cancelled = false`,
+      [currentLedger],
+    ),
+    pool.query("SELECT COUNT(*)::int AS count FROM votes"),
+    pool.query("SELECT COUNT(DISTINCT voter)::int AS count FROM votes"),
+    pool.query("SELECT COUNT(DISTINCT delegator)::int AS count FROM delegates"),
+    pool.query(
+      `SELECT
+         COALESCE(SUM(votes_for + votes_against + votes_abstain), 0)::float8 AS total,
+         COUNT(*)::int AS count
+       FROM proposals WHERE executed = true`,
+    ),
+  ]);
+
+  const totalProposals = Number(totalProposalsRes.rows[0]?.count ?? 0);
+  const activeProposals = Number(activeProposalsRes.rows[0]?.count ?? 0);
+  const totalVotes = Number(totalVotesRes.rows[0]?.count ?? 0);
+  const uniqueVoters = Number(uniqueVotersRes.rows[0]?.count ?? 0);
+  const totalDelegates = Number(totalDelegatesRes.rows[0]?.count ?? 0);
+  const executedProposals = executedProposalsRes.rows[0];
+
+  const totalVotesOnExecuted = Number(executedProposals?.total ?? 0);
+  const executedCount = Number(executedProposals?.count ?? 0);
+
+  const participationRate =
+    executedCount > 0 ? totalVotesOnExecuted / executedCount : 0;
+
+  return {
+    total_proposals: totalProposals,
+    active_proposals: activeProposals,
+    total_votes_cast: totalVotes,
+    unique_voters: uniqueVoters,
+    total_delegates: totalDelegates,
+    participation_rate: Math.round(participationRate * 100) / 100,
+    last_updated: new Date().toISOString(),
+  };
+}
+
 export function createApp(server: SorobanRpc.Server): express.Application {
   const app = express();
   app.use(express.json());
@@ -97,6 +161,18 @@ export function createApp(server: SorobanRpc.Server): express.Application {
         error: "Failed to retrieve health status",
         timestamp: new Date().toISOString(),
       });
+    }
+  });
+
+  // GET /stats
+  app.get("/stats", async (_req: Request, res: Response): Promise<void> => {
+    const key = "stats";
+    try {
+      const data = await cached(key, TTL.stats, async () => getStatsStatus(server));
+      res.json(data);
+    } catch (error) {
+      console.error("Stats error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 
