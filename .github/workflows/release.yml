@@ -68,3 +68,43 @@ jobs:
             target/wasm32-unknown-unknown/release/*.optimized.wasm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-testnet:
+    name: Deploy to Testnet
+    needs: [test-and-build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli
+
+      - name: Deploy to Testnet
+        env:
+          STELLAR_IDENTITY: deployer
+          STELLAR_NETWORK: testnet
+          STELLAR_ACCOUNT_SECRET: ${{ secrets.STELLAR_DEPLOYER_SECRET }}
+        run: |
+          # Import identity from secret
+          stellar keys add deployer --secret-key "$STELLAR_ACCOUNT_SECRET"
+          # Run deployment script
+          cp .env.example .env.testnet
+          ./scripts/deploy-testnet.sh
+          # Update documentation
+          chmod +x ./scripts/update-deployments.sh
+          ./scripts/update-deployments.sh .env.testnet
+
+      - name: Commit and push updated deployments
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/deployments.md
+          git commit -m "docs: update testnet contract addresses [skip ci]" || echo "No changes to commit"
+          git push origin main
