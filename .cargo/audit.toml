@@ -1,0 +1,4 @@
+[advisories]
+ignore = [
+  # Example: "RUSTSEC-2024-0001" — not applicable because we don't use the affected feature
+]
