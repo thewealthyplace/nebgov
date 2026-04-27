@@ -626,6 +626,75 @@ export class GovernorClient {
   }
 
   /**
+   * Simulate `cast_vote` and return the estimated resource cost without submitting.
+   */
+  async estimateVoteGas(
+    voter: string,
+    proposalId: bigint,
+    support: VoteSupport,
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    cpuInsns?: string;
+    memBytes?: string;
+    estimatedFeeStroops?: string;
+  }> {
+    return this.retry(async () => {
+      try {
+        const account = await this.server.getAccount(voter);
+        const supportScVal = xdr.ScVal.scvVec([
+          xdr.ScVal.scvSymbol(VoteSupport[support]),
+        ]);
+
+        const tx = new TransactionBuilder(account, {
+          fee: BASE_FEE,
+          networkPassphrase: this.networkPassphrase,
+        })
+          .addOperation(
+            this.contract.call(
+              "cast_vote",
+              nativeToScVal(voter, { type: "address" }),
+              nativeToScVal(proposalId, { type: "u64" }),
+              supportScVal,
+            ),
+          )
+          .setTimeout(30)
+          .build();
+
+        const result = await this.server.simulateTransaction(tx);
+        if (SorobanRpc.Api.isSimulationError(result)) {
+          const err = result as unknown as { error?: string };
+          return { ok: false, error: err.error ?? "Simulation failed" };
+        }
+
+        const success = result as SorobanRpc.Api.SimulateTransactionSuccessResponse & {
+          cost?: { cpuInsns?: string; memBytes?: string; cpuInstructions?: number; memoryBytes?: number };
+          minResourceFee?: unknown;
+          min_resource_fee?: unknown;
+        };
+
+        return {
+          ok: true,
+          cpuInsns:
+            success.cost?.cpuInsns ??
+            success.cost?.cpuInstructions?.toString(),
+          memBytes:
+            success.cost?.memBytes ??
+            success.cost?.memoryBytes?.toString(),
+          estimatedFeeStroops: toBigInt(
+            success.minResourceFee ?? success.min_resource_fee ?? BASE_FEE,
+          ).toString(),
+        };
+      } catch (e: unknown) {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : "estimate failed",
+        };
+      }
+    });
+  }
+
+  /**
    * Cast a vote on an active proposal.
    */
   async castVote(

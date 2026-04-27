@@ -1,5 +1,8 @@
 import pool from "../db/pool";
 
+const SNAPSHOT_RETENTION_DAYS = Number(process.env.SNAPSHOT_RETENTION_DAYS ?? "90");
+const SNAPSHOT_MIN_DELTA = Number(process.env.SNAPSHOT_MIN_DELTA ?? "0");
+
 /**
  * Daily leaderboard snapshot job
  * Should be run via cron at midnight UTC
@@ -20,14 +23,42 @@ export async function takeLeaderboardSnapshot() {
       ORDER BY rank ASC
     `);
 
+    const latestSnapshotResult = await client.query(`
+      SELECT user_id, score
+      FROM leaderboard_history
+      WHERE snapshot_date = (
+        SELECT MAX(snapshot_date) FROM leaderboard_history
+      )
+    `);
+    const latestSnapshotScores = new Map(
+      latestSnapshotResult.rows.map((row) => [String(row.user_id), Number(row.score)]),
+    );
+
     // Insert snapshots for all users
     for (const row of leaderboardResult.rows) {
+      const previousScore = latestSnapshotScores.get(String(row.user_id));
+      if (
+        previousScore !== undefined &&
+        Math.abs(Number(row.score) - previousScore) < SNAPSHOT_MIN_DELTA
+      ) {
+        continue;
+      }
       await client.query(
         `INSERT INTO leaderboard_history (user_id, score, rank, snapshot_date)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (user_id, snapshot_date) DO UPDATE
          SET score = EXCLUDED.score, rank = EXCLUDED.rank`,
         [row.user_id, row.score, row.rank, today],
+      );
+    }
+
+    if (Number.isFinite(SNAPSHOT_RETENTION_DAYS) && SNAPSHOT_RETENTION_DAYS > 0) {
+      await client.query(
+        `
+        DELETE FROM leaderboard_history
+        WHERE snapshot_date < CURRENT_DATE - ($1::int * INTERVAL '1 day')
+      `,
+        [SNAPSHOT_RETENTION_DAYS],
       );
     }
 

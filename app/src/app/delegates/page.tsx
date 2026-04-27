@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { VotesClient, DelegateInfo, Network } from "@nebgov/sdk";
+import { VotesClient, type TopDelegate, type Network } from "@nebgov/sdk";
 import { useWallet } from "../../lib/wallet-context";
 import { DelegateModal } from "../../components/DelegateModal";
 
@@ -30,13 +30,14 @@ function formatVotes(votes: bigint): string {
 }
 
 export default function DelegatesPage() {
-  const [delegates, setDelegates] = useState<DelegateInfo[]>([]);
+  const [delegates, setDelegates] = useState<TopDelegate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [totalDelegated, setTotalDelegated] = useState(0n);
   const [totalSupply, setTotalSupply] = useState(0n);
   const [modalOpen, setModalOpen] = useState(false);
   const [prefillAddress, setPrefillAddress] = useState<string>("");
+  const [currentDelegatee, setCurrentDelegatee] = useState<string | null>(null);
   const { publicKey } = useWallet();
 
   useEffect(() => {
@@ -63,16 +64,15 @@ export default function DelegatesPage() {
         const supply = await client.getTotalSupply();
         setTotalSupply(supply);
 
-        const knownAddresses = process.env.NEXT_PUBLIC_KNOWN_DELEGATES?.split(",") || [];
-        if (publicKey && !knownAddresses.includes(publicKey)) {
-          knownAddresses.push(publicKey);
-        }
+        const topDelegates = await client.getTopDelegates(20);
+        setDelegates(topDelegates);
+        const total = topDelegates.reduce((sum, d) => sum + d.votingPower, 0n);
+        setTotalDelegated(total);
 
-        if (knownAddresses.length > 0) {
-          const topDelegates = await client.getTopDelegates(knownAddresses, 20);
-          setDelegates(topDelegates);
-          const total = topDelegates.reduce((sum, d) => sum + d.votes, 0n);
-          setTotalDelegated(total);
+        if (publicKey) {
+          setCurrentDelegatee(await client.getDelegatee(publicKey));
+        } else {
+          setCurrentDelegatee(null);
         }
       } catch (err) {
         console.error("Error fetching delegates:", err);
@@ -168,6 +168,10 @@ export default function DelegatesPage() {
 
             {!loading && delegates.map((delegate, index) => {
               const isCurrentUser = publicKey === delegate.address;
+              const percentOfSupply =
+                totalSupply > 0n
+                  ? Number((delegate.votingPower * 10000n) / totalSupply) / 100
+                  : 0;
               return (
                 <tr
                   key={delegate.address}
@@ -187,18 +191,18 @@ export default function DelegatesPage() {
                     </div>
                   </td>
                   <td className="py-4 px-4 text-sm font-medium text-gray-900">
-                    {formatVotes(delegate.votes)}
+                    {formatVotes(delegate.votingPower)}
                   </td>
                   <td className="py-4 px-4">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-gray-200 rounded-full h-2 max-w-[100px]">
                         <div
                           className="bg-indigo-600 h-2 rounded-full"
-                          style={{ width: `${Math.min(delegate.percentOfSupply * 2, 100)}%` }}
+                          style={{ width: `${Math.min(percentOfSupply * 2, 100)}%` }}
                         />
                       </div>
                       <span className="text-sm text-gray-500">
-                        {delegate.percentOfSupply.toFixed(1)}%
+                        {percentOfSupply.toFixed(1)}%
                       </span>
                     </div>
                   </td>
@@ -225,6 +229,7 @@ export default function DelegatesPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onDelegated={() => window.location.reload()}
+        currentDelegatee={currentDelegatee}
       />
     </div>
   );

@@ -32,6 +32,12 @@ export type TreasuryTx = {
   dataHex: string;
 };
 
+export type TreasurySpendingCap = {
+  token: string;
+  maxAmount: bigint;
+  periodLedgers: number;
+};
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -165,6 +171,48 @@ export class TreasuryClient {
     );
     if (!rv) return null;
     return Boolean(scValToNative(rv));
+  }
+
+  async getSpendingCap(
+    viewer: string,
+    token: string,
+  ): Promise<TreasurySpendingCap | null> {
+    const rv = await this.simulate(
+      viewer,
+      this.contract.call(
+        "get_spending_cap",
+        nativeToScVal(token, { type: "address" }),
+      ),
+    );
+    if (!rv) return null;
+
+    const cap = scValToNative(rv) as
+      | {
+          token: string;
+          max_amount: bigint | number | string;
+          period_ledgers: bigint | number | string;
+        }
+      | null;
+
+    if (!cap) return null;
+
+    return {
+      token: cap.token,
+      maxAmount: BigInt(cap.max_amount),
+      periodLedgers: Number(cap.period_ledgers),
+    };
+  }
+
+  async getSpentThisPeriod(viewer: string, token: string): Promise<bigint> {
+    const rv = await this.simulate(
+      viewer,
+      this.contract.call(
+        "get_spent_this_period",
+        nativeToScVal(token, { type: "address" }),
+      ),
+    );
+    if (!rv) return 0n;
+    return BigInt(scValToNative(rv) as number | bigint | string);
   }
 
   async submit(

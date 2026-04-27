@@ -73,6 +73,7 @@ export default function ProposalDetailClient({ params }: Props) {
   const [voteError, setVoteError] = useState<string | null>(null);
   const [votedSupport, setVotedSupport] = useState<VoteSupport | null>(null);
   const [voteType, setVoteType] = useState<VoteType>(VoteType.Simple);
+  const [currentDelegatee, setCurrentDelegatee] = useState<string | null>(null);
 
   // Votes pagination
   const [votes, setVotes] = useState<ProposalVote[]>([]);
@@ -168,6 +169,27 @@ export default function ProposalDetailClient({ params }: Props) {
     if (!governorClient) return;
     governorClient.getSettings().then((s: GovernorSettings) => setVoteType(s.voteType)).catch(() => {});
   }, [governorClient]);
+
+  useEffect(() => {
+    if (!votesClient || !publicKey) {
+      setCurrentDelegatee(null);
+      return;
+    }
+
+    let cancelled = false;
+    void votesClient
+      .getDelegatee(publicKey)
+      .then((delegatee) => {
+        if (!cancelled) setCurrentDelegatee(delegatee);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentDelegatee(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey, votesClient]);
 
   const loadMetadata = useCallback(async () => {
     if (!proposal.metadataUri) return;
@@ -690,6 +712,7 @@ export default function ProposalDetailClient({ params }: Props) {
         open={delegateModalOpen}
         onClose={() => setDelegateModalOpen(false)}
         onDelegated={refreshDelegation}
+        currentDelegatee={currentDelegatee}
       />
       <VotingModal
         open={voteModalOpen}

@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Delegation modal — lets users delegate their voting power.
+ * Delegation modal - lets users delegate or revoke delegation.
  */
 
-import { useState, useEffect } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Keypair } from "@stellar/stellar-sdk";
 import { VotesClient, type Network } from "@nebgov/sdk";
 import { useWallet } from "../lib/wallet-context";
@@ -14,6 +14,7 @@ interface Props {
   onClose: () => void;
   onDelegated?: () => void;
   prefillAddress?: string;
+  currentDelegatee?: string | null;
 }
 
 function getVotesClientFromEnv(): VotesClient {
@@ -40,28 +41,38 @@ function getDelegateSigner(): Keypair {
   const secret = process.env.NEXT_PUBLIC_DELEGATE_SECRET_KEY;
   if (!secret) {
     throw new Error(
-      "Missing NEXT_PUBLIC_DELEGATE_SECRET_KEY (required to sign delegate() tx in this demo app).",
+      "Missing NEXT_PUBLIC_DELEGATE_SECRET_KEY (required to sign delegation txs in this demo app).",
     );
   }
   return Keypair.fromSecret(secret);
 }
 
-export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Props) {
+export function DelegateModal({
+  open,
+  onClose,
+  onDelegated,
+  prefillAddress,
+  currentDelegatee,
+}: Props) {
   const [delegatee, setDelegatee] = useState(prefillAddress || "");
   const [submitting, setSubmitting] = useState(false);
   const { isConnected, publicKey } = useWallet();
 
   useEffect(() => {
-    if (prefillAddress) {
-      setDelegatee(prefillAddress);
-    }
-  }, [prefillAddress]);
+    setDelegatee(prefillAddress ?? "");
+  }, [open, prefillAddress]);
 
   if (!open) return null;
 
-  async function handleDelegate(e: React.FormEvent) {
+  const isDelegatingAway =
+    Boolean(currentDelegatee) &&
+    Boolean(publicKey) &&
+    currentDelegatee !== publicKey;
+
+  async function handleDelegate(e: FormEvent) {
     e.preventDefault();
     if (!delegatee.trim()) return;
+
     setSubmitting(true);
     try {
       if (!isConnected || !publicKey) {
@@ -71,6 +82,59 @@ export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Pr
       const client = getVotesClientFromEnv();
       const signer = getDelegateSigner();
       await client.delegate(signer, delegatee.trim());
+
+      onDelegated?.();
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleUndelegate() {
+    if (!isConnected || !publicKey) {
+      throw new Error("Connect your wallet first.");
+    }
+
+    setSubmitting(true);
+    try {
+      const client = getVotesClientFromEnv();
+      const signer = getDelegateSigner();
+      await client.undelegate(signer);
+
+      onDelegated?.();
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelegateBySig() {
+    if (!delegatee.trim()) return;
+
+    setSubmitting(true);
+    try {
+      if (!isConnected || !publicKey) {
+        throw new Error("Connect your wallet first.");
+      }
+
+      const client = getVotesClientFromEnv();
+      const signer = getDelegateSigner();
+      const nonce = 0n; // TODO: Query current nonce from contract
+      const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      const signature = client.signDelegation(
+        signer,
+        delegatee.trim(),
+        nonce,
+        expiry,
+      );
+
+      await client.delegateBySig(
+        publicKey,
+        delegatee.trim(),
+        nonce,
+        expiry,
+        signature,
+      );
 
       onDelegated?.();
       onClose();
@@ -90,10 +154,20 @@ export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Pr
           address.
         </p>
 
+        {isDelegatingAway && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            You are currently delegating to{" "}
+            <span className="font-mono">{currentDelegatee}</span>. Use
+            undelegation to move power back to yourself.
+          </div>
+        )}
+
         <form onSubmit={handleDelegate} className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <span className="text-xs text-gray-500 font-mono">
-              {publicKey ? `You: ${publicKey.slice(0, 4)}…${publicKey.slice(-4)}` : "Not connected"}
+              {publicKey
+                ? `You: ${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`
+                : "Not connected"}
             </span>
             <button
               type="button"
@@ -104,6 +178,7 @@ export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Pr
               Delegate to myself
             </button>
           </div>
+
           <input
             type="text"
             placeholder="Stellar address (G...)"
@@ -112,6 +187,7 @@ export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Pr
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
             required
           />
+
           <div className="flex gap-3">
             <button
               type="button"
@@ -128,11 +204,25 @@ export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Pr
               {submitting ? "Delegating..." : "Delegate"}
             </button>
           </div>
-          <div className="border-t border-gray-200 pt-4 mt-4">
-            <p className="text-xs text-gray-500 mb-2">Or delegate without paying gas</p>
+
+          {isDelegatingAway && (
             <button
               type="button"
-              onClick={handleDelegateBySig}
+              onClick={() => void handleUndelegate()}
+              disabled={submitting}
+              className="w-full rounded-lg border border-amber-200 bg-amber-50 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+            >
+              {submitting ? "Updating..." : "Undelegate"}
+            </button>
+          )}
+
+          <div className="border-t border-gray-200 pt-4 mt-4">
+            <p className="text-xs text-gray-500 mb-2">
+              Or delegate without paying gas
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleDelegateBySig()}
               disabled={submitting || !delegatee.trim()}
               className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
             >
@@ -147,32 +237,3 @@ export function DelegateModal({ open, onClose, onDelegated, prefillAddress }: Pr
     </div>
   );
 }
-
-  async function handleDelegateBySig(e: React.FormEvent) {
-    e.preventDefault();
-    if (!delegatee.trim()) return;
-    setSubmitting(true);
-    try {
-      if (!isConnected || !publicKey) {
-        throw new Error("Connect your wallet first.");
-      }
-
-      const client = getVotesClientFromEnv();
-      const signer = getDelegateSigner();
-      
-      // Get current nonce for the owner
-      const nonce = 0n; // TODO: Query current nonce from contract
-      const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour expiry
-      
-      // Sign the delegation message off-chain
-      const signature = client.signDelegation(signer, delegatee.trim(), nonce, expiry);
-      
-      // Submit the signed delegation (relayer pays gas)
-      await client.delegateBySig(publicKey, delegatee.trim(), nonce, expiry, signature);
-
-      onDelegated?.();
-      onClose();
-    } finally {
-      setSubmitting(false);
-    }
-  }

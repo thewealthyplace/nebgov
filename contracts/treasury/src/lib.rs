@@ -57,6 +57,15 @@ pub struct TreasurySettings {
     pub max_daily_transfer: i128,
 }
 
+/// Per-token spending cap configuration.
+#[contracttype]
+#[derive(Clone)]
+pub struct SpendingCap {
+    pub token: Address,
+    pub max_amount: i128,
+    pub period_ledgers: u32,
+}
+
 #[contracttype]
 pub enum DataKey {
     TxCount,
@@ -70,6 +79,8 @@ pub enum DataKey {
     Settings,
     DailySpent,
     DayWindowStart,
+    SpendingCap(Address),
+    SpentThisPeriod(Address, u32),
 }
 
 #[contractclient(name = "TreasuryClient")]
@@ -82,6 +93,11 @@ pub struct TreasuryContract;
 
 #[contractimpl]
 impl TreasuryContract {
+    fn period_start_for(ledger: u32, period_ledgers: u32) -> u32 {
+        assert!(period_ledgers > 0, "period must be positive");
+        (ledger / period_ledgers) * period_ledgers
+    }
+
     /// Initialize with owners, threshold, and governor address.
     pub fn initialize(env: Env, owners: Vec<Address>, threshold: u32, governor: Address) {
         assert!(!owners.is_empty(), "no owners");
@@ -115,6 +131,60 @@ impl TreasuryContract {
         env.storage()
             .instance()
             .set(&DataKey::DayWindowStart, &env.ledger().timestamp());
+    }
+
+    /// Configure a per-token spending cap for batch transfers.
+    pub fn set_spending_cap(
+        env: Env,
+        caller: Address,
+        token: Address,
+        max_amount: i128,
+        period_ledgers: u32,
+    ) {
+        caller.require_auth();
+        let governor: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Governor)
+            .expect("not initialized");
+        assert!(caller == governor, "not authorized");
+        assert!(period_ledgers > 0, "period must be positive");
+        assert!(max_amount >= 0, "max amount must be non-negative");
+
+        let cap = SpendingCap {
+            token: token.clone(),
+            max_amount,
+            period_ledgers,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::SpendingCap(token), &cap);
+    }
+
+    /// Get the configured spending cap for a token, if any.
+    pub fn get_spending_cap(env: Env, token: Address) -> Option<SpendingCap> {
+        env.storage()
+            .instance()
+            .get(&DataKey::SpendingCap(token))
+    }
+
+    /// Get the amount spent in the current spending period for a token.
+    pub fn get_spent_this_period(env: Env, token: Address) -> i128 {
+        let cap: Option<SpendingCap> = env
+            .storage()
+            .instance()
+            .get(&DataKey::SpendingCap(token.clone()));
+
+        let Some(cap) = cap else {
+            return 0;
+        };
+
+        let current_ledger = env.ledger().sequence();
+        let period_start = Self::period_start_for(current_ledger, cap.period_ledgers);
+        env.storage()
+            .persistent()
+            .get(&DataKey::SpentThisPeriod(token, period_start))
+            .unwrap_or(0i128)
     }
 
     /// Submit a new transaction for approval.
@@ -350,12 +420,36 @@ impl TreasuryContract {
 
         assert!(!recipients.is_empty(), "empty recipients");
 
+        let mut total_amount: i128 = 0;
+
         // ── Phase 1: validate ALL entries before transferring anything ────────
         // This guarantees all-or-nothing semantics: no tokens move unless the
         // entire batch is valid.
         for i in 0..recipients.len() {
             let r = recipients.get(i).unwrap();
             assert!(r.amount > 0, "amount must be positive");
+            total_amount = total_amount
+                .checked_add(r.amount)
+                .expect("batch amount overflow");
+        }
+
+        let cap: Option<SpendingCap> = env
+            .storage()
+            .instance()
+            .get(&DataKey::SpendingCap(token.clone()));
+        let mut period_start = 0u32;
+        let mut new_spent = 0i128;
+        if let Some(cap) = cap.clone() {
+            period_start = Self::period_start_for(env.ledger().sequence(), cap.period_ledgers);
+            let spent: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::SpentThisPeriod(token.clone(), period_start))
+                .unwrap_or(0i128);
+            new_spent = spent
+                .checked_add(total_amount)
+                .expect("spending accumulator overflow");
+            assert!(new_spent <= cap.max_amount, "spending cap exceeded");
         }
 
         // ── Phase 2: execute all transfers ───────────────────────────────────
@@ -380,6 +474,12 @@ impl TreasuryContract {
             &env,
             &env.ledger().sequence().to_be_bytes(),
         ));
+
+        if cap.is_some() {
+            env.storage()
+                .persistent()
+                .set(&DataKey::SpentThisPeriod(token.clone(), period_start), &new_spent);
+        }
 
         let hash = env.crypto().sha256(&hash_input);
         let op_hash = Bytes::from_array(&env, &hash.to_array());
